@@ -1,0 +1,29 @@
+# Native build artifacts (keep only the pre-built dll)
+native/*.obj
+native/*.exp
+native/*.lib
+native/CMakeCache.txt
+native/CMakeFiles/
+native/cmake_install.cmake
+native/*.dll
+
+# Flutter
+build/
+.dart_tool/
+.flutter-plugins-dependencies
+.packages
+*.iml
+.idea/
+
+# Generated platform files and assets
+linux/flutter/generated_plugin_registrant.*
+linux/flutter/generated_plugins.cmake
+windows/flutter/generated_plugin_registrant.*
+windows/flutter/generated_plugins.cmake
+macos/Flutter/GeneratedPluginRegistrant.swift
+web/icons/
+ios/Runner/Assets.xcassets/AppIcon.appiconset/
+ios/Runner/Assets.xcassets/LaunchImage.imageset/
+macos/Runner/Assets.xcassets/AppIcon.appiconset/
+android/app/src/main/res/mipmap-*/
+lsd_decoder.dll
