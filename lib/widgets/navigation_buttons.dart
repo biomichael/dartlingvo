@@ -19,7 +19,7 @@ class NavigationButtons extends ConsumerWidget {
               ? 'Previous word'
               : 'Previous word: ${tabs.previousEntry!.word}',
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 2),
         _ArrowNavButton(
           icon: Icons.arrow_forward,
           onPressed: tabs.canGoForward ? tabs.goForward : null,
@@ -51,11 +51,12 @@ class _ArrowNavButton extends StatelessWidget {
       message: tooltip,
       child: InkWell(
         onTap: onPressed,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-          child: Opacity(
-            opacity: isEnabled ? 1.0 : 0.45,
+          padding: const EdgeInsets.all(8),
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 150),
+            opacity: isEnabled ? 1.0 : 0.35,
             child: Icon(icon, size: 20),
           ),
         ),

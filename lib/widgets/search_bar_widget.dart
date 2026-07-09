@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/app_state.dart';
+import 'navigation_buttons.dart';
 
 class DictionarySearchBar extends ConsumerStatefulWidget {
   const DictionarySearchBar({super.key});
@@ -39,27 +40,45 @@ class _DictionarySearchBarState extends ConsumerState<DictionarySearchBar> {
       }
     }
 
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: TextField(
-        controller: _controller,
-        focusNode: _focusNode,
-        enabled: manager.hasDictionaries,
-        decoration: InputDecoration(
-          hintText: manager.hasDictionaries
-              ? 'Search words...'
-              : 'Load a dictionary first',
-          prefixIcon: const Icon(Icons.search),
-          border: InputBorder.none,
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        ),
-        onChanged: (value) => ref.read(lookupTabManagerProvider).setQuery(value),
-        onSubmitted: (value) => ref.read(lookupTabManagerProvider).setQuery(value),
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: 46,
+              child: TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                enabled: manager.hasDictionaries,
+                decoration: InputDecoration(
+                  hintText: manager.hasDictionaries
+                      ? 'Search words...'
+                      : 'Load a dictionary first',
+                  prefixIcon: Padding(
+                    padding: const EdgeInsets.only(left: 12, right: 8),
+                    child: Icon(Icons.search, size: 20,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  ),
+                  suffixIcon: _controller.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, size: 18),
+                          onPressed: () {
+                            _controller.clear();
+                            ref.read(lookupTabManagerProvider).setQuery('');
+                          },
+                        )
+                      : null,
+                ),
+                textInputAction: TextInputAction.search,
+                onChanged: (value) => ref.read(lookupTabManagerProvider).setQuery(value),
+                onSubmitted: (value) => ref.read(lookupTabManagerProvider).setQuery(value),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const NavigationButtons(),
+        ],
       ),
     );
   }

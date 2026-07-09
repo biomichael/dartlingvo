@@ -7,7 +7,6 @@ import '../widgets/lookup_tabs_bar.dart';
 import '../widgets/search_bar_widget.dart';
 import '../widgets/word_list.dart';
 import '../widgets/entry_viewer.dart';
-import '../widgets/navigation_buttons.dart';
 import '../widgets/settings_page.dart';
 
 class HomePage extends ConsumerStatefulWidget {
@@ -47,7 +46,6 @@ class _HomePageState extends ConsumerState<HomePage> {
       appBar: AppBar(
         title: const Text('DartLingvo'),
         actions: [
-          const NavigationButtons(),
           IconButton(
             icon: const Icon(Icons.add),
             onPressed: () => _loadDictionary(ref, context),
@@ -103,21 +101,15 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
                 ),
               Expanded(
-                child: _isLandscape(context)
+                child: _isWideLayout(context)
                     ? const Row(
                         children: [
                           Expanded(flex: 2, child: WordList()),
-                          VerticalDivider(width: 1),
+                          _PaneDivider(),
                           Expanded(flex: 3, child: EntryViewer()),
                         ],
                       )
-                    : const Column(
-                        children: [
-                          Expanded(flex: 1, child: WordList()),
-                          Divider(height: 1),
-                          Expanded(flex: 2, child: EntryViewer()),
-                        ],
-                      ),
+                    : const WordList(),
               ),
             ],
           ),
@@ -132,7 +124,10 @@ class _HomePageState extends ConsumerState<HomePage> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const CircularProgressIndicator(),
+                        const SizedBox(
+                          width: 36, height: 36,
+                          child: CircularProgressIndicator(strokeWidth: 3),
+                        ),
                         const SizedBox(height: 20),
                         const Text(
                           'Loading dictionary\u2026',
@@ -163,7 +158,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     return 'Elapsed: $m:$s';
   }
 
-  bool _isLandscape(BuildContext context) {
+  bool _isWideLayout(BuildContext context) {
     final size = MediaQuery.of(context).size;
     return size.width > 600;
   }
@@ -187,6 +182,10 @@ class _HomePageState extends ConsumerState<HomePage> {
       if (path != null) {
         ref.read(dictionaryLoadStateProvider.notifier).state =
             DictionaryLoadState.loaded;
+        ref.read(enabledDictionaryIdsProvider.notifier).update((set) {
+          final manager = ref.read(dictionaryManagerProvider);
+          return {...set, ...manager.dictionaries.map((d) => d.id)};
+        });
       } else {
         ref.read(dictionaryLoadStateProvider.notifier).state =
             DictionaryLoadState.idle;
@@ -213,12 +212,30 @@ class _HomePageState extends ConsumerState<HomePage> {
           manager.hasDictionaries
               ? DictionaryLoadState.loaded
               : DictionaryLoadState.idle;
+      if (manager.hasDictionaries) {
+        ref.read(enabledDictionaryIdsProvider.notifier).update((set) {
+          return {...set, ...manager.dictionaries.map((d) => d.id)};
+        });
+      }
     } catch (e) {
       if (!mounted) return;
       ref.read(dictionaryLoadStateProvider.notifier).state =
           DictionaryLoadState.error;
       ref.read(dictionaryLoadErrorProvider.notifier).state = e.toString();
     }
+  }
+}
+
+class _PaneDivider extends StatelessWidget {
+  const _PaneDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 1,
+      margin: const EdgeInsets.symmetric(vertical: 8),
+      color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
+    );
   }
 }
 

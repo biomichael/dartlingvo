@@ -18,16 +18,27 @@ class EntryViewer extends ConsumerWidget {
       return Align(
         alignment: Alignment.topLeft,
         child: Padding(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.menu_book_outlined, size: 64,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Icon(Icons.menu_book_outlined, size: 48,
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7)),
+              ),
+              const SizedBox(height: 20),
               Text('Select a word to view',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text('Tap any word from the list',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant)),
             ],
           ),
@@ -38,18 +49,19 @@ class EntryViewer extends ConsumerWidget {
     return Align(
       alignment: Alignment.topLeft,
       child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
                   child: Text(
                     entry.word,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.bold,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: -0.5,
                         ),
                   ),
                 ),
@@ -63,7 +75,7 @@ class EntryViewer extends ConsumerWidget {
                 ),
               ],
             ),
-            const Divider(height: 24),
+            const SizedBox(height: 20),
             ...entry.definitions.map((def) => _buildDefinition(context, def, tabs)),
           ],
         ),
@@ -73,8 +85,17 @@ class EntryViewer extends ConsumerWidget {
 
   Widget _buildDefinition(
       BuildContext context, FormattedText def, LookupTabManager tabs) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
+        ),
+      ),
       child: RichText(
         text: _buildTextSpan(context, def.segments, tabs),
       ),
@@ -88,8 +109,8 @@ class EntryViewer extends ConsumerWidget {
     for (final seg in segments) {
       final baseStyle = TextStyle(
         color: _segmentColor(context, seg),
-        height: 1.5,
-        fontWeight: seg.type == TextSegmentType.bold ? FontWeight.bold : FontWeight.normal,
+        height: 1.6,
+        fontWeight: seg.type == TextSegmentType.bold ? FontWeight.w600 : FontWeight.normal,
         fontStyle: seg.type == TextSegmentType.italic || seg.type == TextSegmentType.example
             ? FontStyle.italic
             : FontStyle.normal,
@@ -98,14 +119,26 @@ class EntryViewer extends ConsumerWidget {
             : seg.strikeThrough
                 ? TextDecoration.lineThrough
                 : TextDecoration.none,
-        fontSize: seg.superscript || seg.subscript ? 12 : null,
+        fontSize: seg.superscript || seg.subscript ? 11 : null,
       );
 
       if (seg.type == TextSegmentType.reference) {
         spans.add(WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
           child: GestureDetector(
             onTap: () => _handleRefTap(seg.text, tabs),
-            child: Text(seg.text, style: baseStyle.copyWith(color: Theme.of(context).colorScheme.primary)),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(seg.text, style: baseStyle.copyWith(
+                color: Theme.of(context).colorScheme.primary,
+                fontWeight: FontWeight.w500,
+              )),
+            ),
           ),
         ));
       } else {
@@ -260,7 +293,7 @@ class _DictionaryToggle extends StatelessWidget {
                     children: [
                       Flexible(child: Text(entry.dictionaryName, overflow: TextOverflow.ellipsis)),
                       if (entry.dictionaryId == current.dictionaryId)
-                        const Icon(Icons.check, size: 16),
+                        Icon(Icons.check, size: 16, color: colorScheme.primary),
                     ],
                   ),
                 ),

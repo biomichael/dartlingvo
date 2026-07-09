@@ -39,12 +39,20 @@ final searchQueryProvider = Provider<String>((ref) {
   return manager.activeQuery;
 });
 
+final enabledDictionaryIdsProvider = StateProvider<Set<String>>((ref) => {});
+
+final isDictionaryEnabledProvider = Provider<bool Function(String)>((ref) {
+  final enabledSet = ref.watch(enabledDictionaryIdsProvider);
+  return (dictId) => enabledSet.isEmpty || enabledSet.contains(dictId);
+});
+
 final searchResultsProvider = Provider<List<WordSearchResult>>((ref) {
   final query = ref.watch(searchQueryProvider);
   if (query.isEmpty) return [];
 
   final searchEngine = ref.watch(searchEngineProvider);
   final manager = ref.watch(dictionaryManagerProvider);
+  final isEnabled = ref.watch(isDictionaryEnabledProvider);
   final matches = searchEngine.search(query);
 
   // Build dictionary order lookup
@@ -58,6 +66,7 @@ final searchResultsProvider = Provider<List<WordSearchResult>>((ref) {
   final order = <String>[];
 
   for (final match in matches) {
+    if (!isEnabled(match.dictionaryId)) continue;
     final existing = grouped[match.word];
     if (existing == null) {
       grouped[match.word] = [match];
@@ -95,10 +104,18 @@ final currentAvailableEntriesProvider = Provider<List<DictionaryEntry>>((ref) {
   if (entry == null) return [];
 
   final dictionaryManager = ref.watch(dictionaryManagerProvider);
-  return dictionaryManager.getEntriesForWord(entry.word);
+  final isEnabled = ref.watch(isDictionaryEnabledProvider);
+  final all = dictionaryManager.getEntriesForWord(entry.word);
+  return all.where((e) => isEnabled(e.dictionaryId)).toList();
 });
 
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
+
+final fontFamilyProvider = StateProvider<String>((ref) => 'Inter');
+
+const availableFonts = ['Inter', 'Roboto', 'Lato', 'Merriweather', 'Open Sans'];
+
+final textScaleProvider = StateProvider<double>((ref) => 1.0);
 
 enum DictionaryLoadState { idle, loading, loaded, error }
 

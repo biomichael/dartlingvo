@@ -25,70 +25,98 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
     final tabs = manager.tabs;
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Scroll tabs left',
-            onPressed: _scrollController.hasClients
-                ? () => _scrollBy(-260)
-                : null,
-            icon: const Icon(Icons.chevron_left),
-          ),
-          Expanded(
-            child: SizedBox(
-              height: 48,
-              child: Scrollbar(
-                controller: _scrollController,
-                thumbVisibility: tabs.length > 4,
-                child: ListView.separated(
-                  controller: _scrollController,
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: tabs.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final tab = tabs[index];
-                    return _LookupTabTile(
-                      tab: tab,
-                      selected: tab.id == manager.activeTabId,
-                      onTap: () => ref.read(lookupTabManagerProvider).activateTab(tab.id),
-                      onClose: () => ref.read(lookupTabManagerProvider).closeTab(tab.id),
-                    );
-                  },
+          if (tabs.length > 3)
+            IconButton(
+              tooltip: 'Scroll tabs left',
+              onPressed: _scrollController.hasClients
+                  ? () => _scrollBy(-260)
+                  : null,
+              icon: const Icon(Icons.chevron_left, size: 20),
+              visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
                 ),
               ),
             ),
+          const SizedBox(width: 4),
+          Expanded(
+            child: SizedBox(
+              height: 40,
+              child: ListView.separated(
+                controller: _scrollController,
+                scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
+                itemCount: tabs.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, index) {
+                  final tab = tabs[index];
+                  return _LookupTabTile(
+                    tab: tab,
+                    selected: tab.id == manager.activeTabId,
+                    onTap: () => ref.read(lookupTabManagerProvider).activateTab(tab.id),
+                    onClose: () => ref.read(lookupTabManagerProvider).closeTab(tab.id),
+                  );
+                },
+              ),
+            ),
           ),
-          const SizedBox(width: 8),
-          Text(
-            '${tabs.length} tabs',
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
+          const SizedBox(width: 4),
+          if (tabs.length > 3)
+            IconButton(
+              tooltip: 'Scroll tabs right',
+              onPressed: _scrollController.hasClients
+                  ? () => _scrollBy(260)
+                  : null,
+              icon: const Icon(Icons.chevron_right, size: 20),
+              visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10),
                 ),
-          ),
-          const SizedBox(width: 8),
-          IconButton(
-            tooltip: 'Close other tabs',
-            onPressed: tabs.length > 1
-                ? () => ref.read(lookupTabManagerProvider).closeOtherTabs()
-                : null,
-            icon: const Icon(Icons.close_fullscreen),
-          ),
+              ),
+            ),
           const SizedBox(width: 4),
-          IconButton(
-            tooltip: 'Scroll tabs right',
-            onPressed: _scrollController.hasClients
-                ? () => _scrollBy(260)
-                : null,
-            icon: const Icon(Icons.chevron_right),
-          ),
           const SizedBox(width: 4),
-          IconButton.filledTonal(
-            tooltip: 'New tab',
-            onPressed: () => ref.read(lookupTabManagerProvider).openTab(),
-            icon: const Icon(Icons.add),
+          if (tabs.length > 1)
+            Tooltip(
+              message: 'Close other tabs',
+              child: SizedBox(
+                height: 40,
+                child: IconButton(
+                  onPressed: () => ref.read(lookupTabManagerProvider).closeOtherTabs(),
+                  icon: Icon(Icons.delete_sweep, size: 18),
+                  visualDensity: VisualDensity.compact,
+                  style: IconButton.styleFrom(
+                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          const SizedBox(width: 12),
+          Tooltip(
+            message: 'New tab',
+            child: SizedBox(
+              height: 40,
+              child: FilledButton.tonal(
+                onPressed: () => ref.read(lookupTabManagerProvider).openTab(),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                child: Text('${tabs.length} +'),
+              ),
+            ),
           ),
         ],
       ),
@@ -107,7 +135,6 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
       curve: Curves.easeOut,
     );
   }
-
 }
 
 class _LookupTabTile extends StatelessWidget {
@@ -133,37 +160,42 @@ class _LookupTabTile extends StatelessWidget {
         ? theme.colorScheme.onPrimaryContainer
         : theme.colorScheme.onSurfaceVariant;
 
-    return Material(
-      color: background,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 132, maxWidth: 220),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  tab.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: foreground,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+    return SizedBox(
+      height: 40,
+      child: Material(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            constraints: const BoxConstraints(minWidth: 120, maxWidth: 200),
+            padding: const EdgeInsets.only(left: 12, right: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    tab.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: foreground,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                    ),
                   ),
                 ),
-              ),
-              IconButton(
-                tooltip: 'Close tab',
-                onPressed: onClose,
-                visualDensity: VisualDensity.compact,
-                iconSize: 18,
-                splashRadius: 18,
-                icon: const Icon(Icons.close),
-              ),
-            ],
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: onClose,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(Icons.close, size: 14, color: foreground.withValues(alpha: 0.7)),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
