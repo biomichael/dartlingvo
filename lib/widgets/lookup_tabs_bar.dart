@@ -23,9 +23,11 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
   Widget build(BuildContext context) {
     final manager = ref.watch(lookupTabManagerProvider);
     final tabs = manager.tabs;
+    final isCompact = MediaQuery.sizeOf(context).height < 500 ||
+        MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+      padding: EdgeInsets.fromLTRB(8, isCompact ? 4 : 8, 8, 0),
       child: Row(
         children: [
           if (tabs.length > 3)
@@ -35,6 +37,7 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
                   ? () => _scrollBy(-260)
                   : null,
               icon: const Icon(Icons.chevron_left, size: 20),
+              iconSize: isCompact ? 18 : 20,
               visualDensity: VisualDensity.compact,
               style: IconButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -46,7 +49,7 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
           const SizedBox(width: 4),
           Expanded(
             child: SizedBox(
-              height: 40,
+              height: isCompact ? 32 : 40,
               child: ListView.separated(
                 controller: _scrollController,
                 scrollDirection: Axis.horizontal,
@@ -73,6 +76,7 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
                   ? () => _scrollBy(260)
                   : null,
               icon: const Icon(Icons.chevron_right, size: 20),
+              iconSize: isCompact ? 18 : 20,
               visualDensity: VisualDensity.compact,
               style: IconButton.styleFrom(
                 backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -87,10 +91,11 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
             Tooltip(
               message: 'Close other tabs',
               child: SizedBox(
-                height: 40,
+                height: isCompact ? 32 : 40,
                 child: IconButton(
                   onPressed: () => ref.read(lookupTabManagerProvider).closeOtherTabs(),
                   icon: Icon(Icons.delete_sweep, size: 18),
+                  iconSize: isCompact ? 16 : 18,
                   visualDensity: VisualDensity.compact,
                   style: IconButton.styleFrom(
                     backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -105,11 +110,11 @@ class _LookupTabsBarState extends ConsumerState<LookupTabsBar> {
           Tooltip(
             message: 'New tab',
             child: SizedBox(
-              height: 40,
+              height: isCompact ? 32 : 40,
               child: FilledButton.tonal(
                 onPressed: () => ref.read(lookupTabManagerProvider).openTab(),
                 style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  padding: EdgeInsets.symmetric(horizontal: isCompact ? 10 : 14),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(10),
                   ),

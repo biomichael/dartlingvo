@@ -28,6 +28,8 @@ class _DictionarySearchBarState extends ConsumerState<DictionarySearchBar> {
     final manager = ref.watch(dictionaryManagerProvider);
     final tabs = ref.watch(lookupTabManagerProvider.select((value) => value.activeTabId));
     final activeTab = ref.read(activeLookupTabProvider);
+    final isCompact = MediaQuery.sizeOf(context).height < 500 ||
+        MediaQuery.viewInsetsOf(context).bottom > 0;
 
     if (_activeTabId != tabs) {
       _activeTabId = tabs;
@@ -41,12 +43,12 @@ class _DictionarySearchBarState extends ConsumerState<DictionarySearchBar> {
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: isCompact ? 4 : 8),
       child: Row(
         children: [
           Expanded(
             child: SizedBox(
-              height: 46,
+              height: isCompact ? 38 : 46,
               child: TextField(
                 controller: _controller,
                 focusNode: _focusNode,
@@ -57,12 +59,12 @@ class _DictionarySearchBarState extends ConsumerState<DictionarySearchBar> {
                       : 'Load a dictionary first',
                   prefixIcon: Padding(
                     padding: const EdgeInsets.only(left: 12, right: 8),
-                    child: Icon(Icons.search, size: 20,
+                    child: Icon(Icons.search, size: isCompact ? 18 : 20,
                         color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                   suffixIcon: _controller.text.isNotEmpty
                       ? IconButton(
-                          icon: const Icon(Icons.clear, size: 18),
+                          icon: Icon(Icons.clear, size: isCompact ? 16 : 18),
                           onPressed: () {
                             _controller.clear();
                             ref.read(lookupTabManagerProvider).setQuery('');

@@ -17,189 +17,320 @@ class SettingsPage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Settings'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        children: [
-          _SectionCard(
-            title: 'Appearance',
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 520;
+
+          return ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             children: [
-              _SettingsTile(
-                icon: Icons.brightness_6,
-                title: 'Theme',
-                subtitle: _themeName(themeMode),
-                trailing: _SegmentedThemeSelector(),
-              ),
-              const _Divider(),
-              _SettingsTile(
-                icon: Icons.text_fields,
-                title: 'Font',
-                subtitle: fontFamily,
-                trailing: _FontSelector(),
-              ),
-              const _Divider(),
-              _SettingsTile(
-                icon: Icons.format_size,
-                title: 'Text Size',
-                subtitle: '${textScale.toStringAsFixed(1)}x',
-                trailing: _TextSizeSlider(),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _SectionCard(
-            title: 'Dictionaries',
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                child: Row(
-                  children: [
-                    _StatBadge(
-                      icon: Icons.book,
-                      value: '${manager.dictionaries.length}',
-                      label: 'dictionaries',
-                    ),
-                    const SizedBox(width: 16),
-                    _StatBadge(
-                      icon: Icons.text_snippet,
-                      value: '${manager.totalWordCount}',
-                      label: 'entries',
-                    ),
-                  ],
-                ),
-              ),
-              if (manager.hasDictionaries) ...[
-                const _Divider(),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
-                  child: Text(
-                    'Loaded Dictionaries',
-                    style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
+              _SectionCard(
+                title: 'Appearance',
+                children: [
+                  _SettingsTile(
+                    icon: Icons.brightness_6,
+                    title: 'Theme',
+                    subtitle: _themeName(themeMode),
+                    trailing: _SegmentedThemeSelector(),
+                    isNarrow: isNarrow,
                   ),
-                ),
-                ReorderableListView(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  buildDefaultDragHandles: false,
-                  onReorder: (oldIndex, newIndex) {
-                    ref.read(dictionaryManagerProvider).reorderDictionaries(oldIndex, newIndex);
-                  },
-                  children: manager.dictionaries.map((dict) {
-                    final index = manager.dictionaries.indexOf(dict);
-                    final isEnabled = enabledSet.isEmpty || enabledSet.contains(dict.id);
-                    return Padding(
-                      key: ValueKey(dict.id),
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Material(
-                        color: Theme.of(context).colorScheme.surface,
-                        borderRadius: BorderRadius.circular(12),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                            child: Row(
-                              children: [
-                                ReorderableDragStartListener(
-                                  index: index,
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8),
-                                    child: Icon(Icons.drag_indicator,
-                                        size: 20,
-                                        color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.5)),
-                                  ),
+                  const _Divider(),
+                  _SettingsTile(
+                    icon: Icons.text_fields,
+                    title: 'Font',
+                    subtitle: fontFamily,
+                    trailing: _FontSelector(),
+                    isNarrow: isNarrow,
+                  ),
+                  const _Divider(),
+                  _SettingsTile(
+                    icon: Icons.format_size,
+                    title: 'Text Size',
+                    subtitle: '${textScale.toStringAsFixed(1)}x',
+                    trailing: _TextSizeSlider(isNarrow: isNarrow),
+                    isNarrow: isNarrow,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              _SectionCard(
+                title: 'Dictionaries',
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: isNarrow
+                        ? Column(
+                            children: [
+                              SizedBox(
+                                width: double.infinity,
+                                child: _StatBadge(
+                                  icon: Icons.book,
+                                  value: '${manager.dictionaries.length}',
+                                  label: 'dictionaries',
                                 ),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        dict.name,
-                                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                              fontWeight: FontWeight.w500,
+                              ),
+                              const SizedBox(height: 10),
+                              SizedBox(
+                                width: double.infinity,
+                                child: _StatBadge(
+                                  icon: Icons.text_snippet,
+                                  value: '${manager.totalWordCount}',
+                                  label: 'entries',
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              Expanded(
+                                child: _StatBadge(
+                                  icon: Icons.book,
+                                  value: '${manager.dictionaries.length}',
+                                  label: 'dictionaries',
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: _StatBadge(
+                                  icon: Icons.text_snippet,
+                                  value: '${manager.totalWordCount}',
+                                  label: 'entries',
+                                ),
+                              ),
+                            ],
+                          ),
+                  ),
+                  if (manager.hasDictionaries) ...[
+                    const _Divider(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 4, 4, 4),
+                      child: Text(
+                        'Loaded Dictionaries',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                    ),
+                    ReorderableListView(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      buildDefaultDragHandles: false,
+                      onReorder: (oldIndex, newIndex) {
+                        ref.read(dictionaryManagerProvider).reorderDictionaries(oldIndex, newIndex);
+                      },
+                      children: manager.dictionaries.map((dict) {
+                        final index = manager.dictionaries.indexOf(dict);
+                        final isEnabled = enabledSet.isEmpty || enabledSet.contains(dict.id);
+                        return Padding(
+                          key: ValueKey(dict.id),
+                          padding: const EdgeInsets.only(bottom: 2),
+                          child: Material(
+                            color: Theme.of(context).colorScheme.surface,
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                child: isNarrow
+                                    ? Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              ReorderableDragStartListener(
+                                                index: index,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.all(8),
+                                                  child: Icon(
+                                                    Icons.drag_indicator,
+                                                    size: 20,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant
+                                                        .withValues(alpha: 0.5),
+                                                  ),
+                                                ),
+                                              ),
+                                              Expanded(
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                                  child: Column(
+                                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                                    children: [
+                                                      Text(
+                                                        dict.name,
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodyMedium
+                                                            ?.copyWith(
+                                                              fontWeight: FontWeight.w500,
+                                                            ),
+                                                      ),
+                                                      const SizedBox(height: 2),
+                                                      Text(
+                                                        '${dict.wordCount} entries',
+                                                        style: Theme.of(context)
+                                                            .textTheme
+                                                            .bodySmall
+                                                            ?.copyWith(
+                                                              color: Theme.of(context)
+                                                                  .colorScheme
+                                                                  .onSurfaceVariant,
+                                                            ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Switch(
+                                                value: isEnabled,
+                                                onChanged: (value) {
+                                                  ref.read(enabledDictionaryIdsProvider.notifier).update((set) {
+                                                    final updated = {...set};
+                                                    if (value) {
+                                                      updated.add(dict.id);
+                                                      final all = ref.read(dictionaryManagerProvider).dictionaries;
+                                                      for (final d in all) {
+                                                        updated.add(d.id);
+                                                      }
+                                                    } else {
+                                                      updated.remove(dict.id);
+                                                    }
+                                                    return updated;
+                                                  });
+                                                },
+                                              ),
+                                              IconButton(
+                                                icon: Icon(
+                                                  Icons.delete_outline,
+                                                  size: 20,
+                                                  color: Theme.of(context).colorScheme.error,
+                                                ),
+                                                onPressed: () => _confirmRemove(ref, context, dict.id, dict.name),
+                                                tooltip: 'Remove dictionary',
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      )
+                                    : Row(
+                                        children: [
+                                          ReorderableDragStartListener(
+                                            index: index,
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(8),
+                                              child: Icon(
+                                                Icons.drag_indicator,
+                                                size: 20,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurfaceVariant
+                                                    .withValues(alpha: 0.5),
+                                              ),
                                             ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        '${dict.wordCount} entries',
-                                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                          ),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  dict.name,
+                                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                                        fontWeight: FontWeight.w500,
+                                                      ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                Text(
+                                                  '${dict.wordCount} entries',
+                                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                                      ),
+                                                ),
+                                              ],
                                             ),
+                                          ),
+                                          Switch(
+                                            value: isEnabled,
+                                            onChanged: (value) {
+                                              ref.read(enabledDictionaryIdsProvider.notifier).update((set) {
+                                                final updated = {...set};
+                                                if (value) {
+                                                  updated.add(dict.id);
+                                                  final all = ref.read(dictionaryManagerProvider).dictionaries;
+                                                  for (final d in all) {
+                                                    updated.add(d.id);
+                                                  }
+                                                } else {
+                                                  updated.remove(dict.id);
+                                                }
+                                                return updated;
+                                              });
+                                            },
+                                          ),
+                                          IconButton(
+                                            icon: Icon(
+                                              Icons.delete_outline,
+                                              size: 20,
+                                              color: Theme.of(context).colorScheme.error,
+                                            ),
+                                            onPressed: () => _confirmRemove(ref, context, dict.id, dict.name),
+                                            tooltip: 'Remove dictionary',
+                                          ),
+                                        ],
                                       ),
-                                    ],
-                                  ),
-                                ),
-                                Switch(
-                                  value: isEnabled,
-                                  onChanged: (value) {
-                                    ref.read(enabledDictionaryIdsProvider.notifier).update((set) {
-                                      final updated = {...set};
-                                      if (value) {
-                                        updated.add(dict.id);
-                                        final all = ref.read(dictionaryManagerProvider).dictionaries;
-                                        for (final d in all) {
-                                          updated.add(d.id);
-                                        }
-                                      } else {
-                                        updated.remove(dict.id);
-                                      }
-                                      return updated;
-                                    });
-                                  },
-                                ),
-                                IconButton(
-                                  icon: Icon(Icons.delete_outline, size: 20,
-                                      color: Theme.of(context).colorScheme.error),
-                                  onPressed: () => _confirmRemove(ref, context, dict.id, dict.name),
-                                  tooltip: 'Remove dictionary',
-                                ),
-                              ],
+                              ),
                             ),
                           ),
-                        ),
+                        );
+                      }).toList(),
+                    ),
+                    const _Divider(),
+                    ListTile(
+                      leading: Icon(Icons.delete_sweep,
+                          color: Theme.of(context).colorScheme.error),
+                      title: Text('Remove All Dictionaries',
+                          style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                      onTap: () => _confirmClearAll(ref, context),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    );
-                  }).toList(),
-                ),
-                const _Divider(),
-                ListTile(
-                  leading: Icon(Icons.delete_sweep,
-                      color: Theme.of(context).colorScheme.error),
-                  title: Text('Remove All Dictionaries',
-                      style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  onTap: () => _confirmClearAll(ref, context),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 12),
-          _SectionCard(
-            title: 'About',
-            children: [
-              ListTile(
-                leading: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.info_outline,
-                      color: Theme.of(context).colorScheme.primary),
-                ),
-                title: const Text('DartLingvo'),
-                subtitle: const Text('Version 1.0.0'),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                    ),
+                  ],
+                ],
               ),
+              const SizedBox(height: 12),
+              _SectionCard(
+                title: 'About',
+                children: [
+                  ListTile(
+                    leading: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(Icons.info_outline,
+                          color: Theme.of(context).colorScheme.primary),
+                    ),
+                    title: const Text('DartLingvo'),
+                    subtitle: const Text('Version 1.0.0'),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 32),
             ],
-          ),
-          const SizedBox(height: 32),
-        ],
+          );
+        },
       ),
     );
   }
@@ -303,48 +434,90 @@ class _SettingsTile extends StatelessWidget {
   final String title;
   final String subtitle;
   final Widget trailing;
+  final bool isNarrow;
 
   const _SettingsTile({
     required this.icon,
     required this.title,
     required this.subtitle,
     required this.trailing,
+    required this.isNarrow,
   });
 
   @override
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
+      child: isNarrow
+          ? Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          fontWeight: FontWeight.w500,
-                        )),
-                Text(subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        )),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(title,
+                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                    fontWeight: FontWeight.w500,
+                                  )),
+                          Text(subtitle,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                  )),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: _NarrowControlShell(child: trailing),
+                ),
+              ],
+            )
+          : Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title,
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w500,
+                              )),
+                      Text(subtitle,
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              )),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                trailing,
               ],
             ),
-          ),
-          const SizedBox(width: 12),
-          trailing,
-        ],
-      ),
     );
   }
 }
@@ -377,28 +550,50 @@ class _StatBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(height: 6),
-            Text(value,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    )),
-            Text(label,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    )),
-          ],
-        ),
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
       ),
+      child: Column(
+        children: [
+          Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(height: 6),
+          Text(value,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  )),
+          Text(label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  )),
+        ],
+      ),
+    );
+  }
+}
+
+class _NarrowControlShell extends StatelessWidget {
+  final Widget child;
+
+  const _NarrowControlShell({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (child is _SegmentedThemeSelector) {
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: child,
+        ),
+      );
+    }
+
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: child,
     );
   }
 }
@@ -490,6 +685,10 @@ class _FontSelector extends StatelessWidget {
 }
 
 class _TextSizeSlider extends StatefulWidget {
+  final bool isNarrow;
+
+  const _TextSizeSlider({required this.isNarrow});
+
   @override
   State<_TextSizeSlider> createState() => _TextSizeSliderState();
 }
@@ -501,7 +700,7 @@ class _TextSizeSliderState extends State<_TextSizeSlider> {
       builder: (context, ref, _) {
         final current = ref.watch(textScaleProvider);
         return SizedBox(
-          width: 120,
+          width: widget.isNarrow ? double.infinity : 120,
           child: Slider(
             value: current,
             min: 0.7,

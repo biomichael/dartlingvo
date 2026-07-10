@@ -8,6 +8,8 @@ class NavigationButtons extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tabs = ref.watch(lookupTabManagerProvider);
+    final isCompact = MediaQuery.sizeOf(context).height < 500 ||
+        MediaQuery.viewInsetsOf(context).bottom > 0;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
@@ -18,6 +20,7 @@ class NavigationButtons extends ConsumerWidget {
           tooltip: tabs.previousEntry?.word == null
               ? 'Previous word'
               : 'Previous word: ${tabs.previousEntry!.word}',
+          isCompact: isCompact,
         ),
         const SizedBox(width: 2),
         _ArrowNavButton(
@@ -26,6 +29,7 @@ class NavigationButtons extends ConsumerWidget {
           tooltip: tabs.nextEntry?.word == null
               ? 'Next word'
               : 'Next word: ${tabs.nextEntry!.word}',
+          isCompact: isCompact,
         ),
       ],
     );
@@ -36,11 +40,13 @@ class _ArrowNavButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onPressed;
   final String tooltip;
+  final bool isCompact;
 
   const _ArrowNavButton({
     required this.icon,
     required this.onPressed,
     required this.tooltip,
+    required this.isCompact,
   });
 
   @override
@@ -53,11 +59,11 @@ class _ArrowNavButton extends StatelessWidget {
         onTap: onPressed,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
-          padding: const EdgeInsets.all(8),
+          padding: EdgeInsets.all(isCompact ? 6 : 8),
           child: AnimatedOpacity(
             duration: const Duration(milliseconds: 150),
             opacity: isEnabled ? 1.0 : 0.35,
-            child: Icon(icon, size: 20),
+            child: Icon(icon, size: isCompact ? 18 : 20),
           ),
         ),
       ),
