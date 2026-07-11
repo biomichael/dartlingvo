@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:math' as math;
 import '../state/app_state.dart';
 
 class SettingsPage extends ConsumerWidget {
@@ -20,6 +21,7 @@ class SettingsPage extends ConsumerWidget {
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isNarrow = constraints.maxWidth < 520;
+          final appearanceControlWidth = math.min(320.0, math.max(240.0, constraints.maxWidth - 64));
 
           return ListView(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -33,6 +35,7 @@ class SettingsPage extends ConsumerWidget {
                     subtitle: _themeName(themeMode),
                     trailing: _SegmentedThemeSelector(),
                     isNarrow: isNarrow,
+                    controlWidth: appearanceControlWidth,
                   ),
                   const _Divider(),
                   _SettingsTile(
@@ -41,14 +44,16 @@ class SettingsPage extends ConsumerWidget {
                     subtitle: fontFamily,
                     trailing: _FontSelector(),
                     isNarrow: isNarrow,
+                    controlWidth: appearanceControlWidth,
                   ),
                   const _Divider(),
                   _SettingsTile(
                     icon: Icons.format_size,
                     title: 'Text Size',
                     subtitle: '${textScale.toStringAsFixed(1)}x',
-                    trailing: _TextSizeSlider(isNarrow: isNarrow),
+                    trailing: const _TextSizeSlider(),
                     isNarrow: isNarrow,
+                    controlWidth: appearanceControlWidth,
                   ),
                 ],
               ),
@@ -435,6 +440,7 @@ class _SettingsTile extends StatelessWidget {
   final String subtitle;
   final Widget trailing;
   final bool isNarrow;
+  final double controlWidth;
 
   const _SettingsTile({
     required this.icon,
@@ -442,6 +448,7 @@ class _SettingsTile extends StatelessWidget {
     required this.subtitle,
     required this.trailing,
     required this.isNarrow,
+    required this.controlWidth,
   });
 
   @override
@@ -483,8 +490,8 @@ class _SettingsTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 SizedBox(
-                  width: double.infinity,
-                  child: _NarrowControlShell(child: trailing),
+                  width: controlWidth,
+                  child: trailing,
                 ),
               ],
             )
@@ -515,7 +522,10 @@ class _SettingsTile extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                trailing,
+                SizedBox(
+                  width: controlWidth,
+                  child: trailing,
+                ),
               ],
             ),
     );
@@ -574,51 +584,30 @@ class _StatBadge extends StatelessWidget {
   }
 }
 
-class _NarrowControlShell extends StatelessWidget {
-  final Widget child;
-
-  const _NarrowControlShell({required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    if (child is _SegmentedThemeSelector) {
-      return SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Align(
-          alignment: Alignment.centerLeft,
-          child: child,
-        ),
-      );
-    }
-
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: child,
-    );
-  }
-}
-
 class _SegmentedThemeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Consumer(
       builder: (context, ref, _) {
         final current = ref.watch(themeModeProvider);
-        return SegmentedButton<ThemeMode>(
-          segments: const [
-            ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode, size: 16)),
-            ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto, size: 16)),
-            ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode, size: 16)),
-          ],
-          selected: {current},
-          onSelectionChanged: (selected) {
-            ref.read(themeModeProvider.notifier).state = selected.first;
-          },
-          style: ButtonStyle(
-            visualDensity: VisualDensity.compact,
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            shape: WidgetStatePropertyAll(
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        return SizedBox(
+          width: double.infinity,
+          child: SegmentedButton<ThemeMode>(
+            segments: const [
+              ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode, size: 16)),
+              ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto, size: 16)),
+              ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode, size: 16)),
+            ],
+            selected: {current},
+            onSelectionChanged: (selected) {
+              ref.read(themeModeProvider.notifier).state = selected.first;
+            },
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              shape: WidgetStatePropertyAll(
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
             ),
           ),
         );
@@ -660,18 +649,24 @@ class _FontSelector extends StatelessWidget {
               ),
           ],
           child: Container(
+            width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
               color: Theme.of(context).colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
-              mainAxisSize: MainAxisSize.min,
               children: [
-                Text(current,
+                Expanded(
+                  child: Text(
+                    current,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           fontWeight: FontWeight.w500,
-                        )),
+                        ),
+                  ),
+                ),
                 const SizedBox(width: 4),
                 Icon(Icons.arrow_drop_down, size: 16,
                     color: Theme.of(context).colorScheme.onSurfaceVariant),
@@ -685,9 +680,7 @@ class _FontSelector extends StatelessWidget {
 }
 
 class _TextSizeSlider extends StatefulWidget {
-  final bool isNarrow;
-
-  const _TextSizeSlider({required this.isNarrow});
+  const _TextSizeSlider({super.key});
 
   @override
   State<_TextSizeSlider> createState() => _TextSizeSliderState();
@@ -700,7 +693,7 @@ class _TextSizeSliderState extends State<_TextSizeSlider> {
       builder: (context, ref, _) {
         final current = ref.watch(textScaleProvider);
         return SizedBox(
-          width: widget.isNarrow ? double.infinity : 120,
+          width: double.infinity,
           child: Slider(
             value: current,
             min: 0.7,
