@@ -657,26 +657,40 @@ const xorPad = [
 
 class LsdDecoderDart {
   final String filePath;
+  final String? dictionaryId;
 
-  LsdDecoderDart(this.filePath);
+  LsdDecoderDart(this.filePath, {this.dictionaryId});
 
   Future<LsdDecodeResult> decode() async {
     final file = File(filePath);
     final data = await file.readAsBytes();
 
-    final jsonString = await Isolate.run(() => _lsdDecodeInIsolate(data))
+    if (Platform.isIOS) {
+      return _lsdDecodeCore(data, dictionaryId: dictionaryId);
+    }
+
+    final jsonString = await Isolate.run(() => _lsdDecodeInIsolateJson(
+          data,
+          dictionaryId: dictionaryId,
+        ))
         .timeout(const Duration(seconds: 120));
 
     final map = jsonDecode(jsonString) as Map<String, dynamic>;
-    final name = map['name'] as String;
-    final entries = (map['entries'] as List)
-        .map((e) => DictionaryEntry.fromJson(e as Map<String, dynamic>))
-        .toList();
-    return LsdDecodeResult(name: name, entries: entries);
+    return LsdDecodeResult.fromJson(map);
   }
 }
 
-String _lsdDecodeInIsolate(Uint8List data) {
+String _lsdDecodeInIsolateJson(
+  Uint8List data, {
+  String? dictionaryId,
+}) {
+  return jsonEncode(_lsdDecodeCore(data, dictionaryId: dictionaryId).toJson());
+}
+
+LsdDecodeResult _lsdDecodeCore(
+  Uint8List data, {
+  String? dictionaryId,
+}) {
   final bs = BitStream(data);
   final header = LsdHeader.fromStream(bs);
 
@@ -756,8 +770,9 @@ String _lsdDecodeInIsolate(Uint8List data) {
     }
   }
 
-  final articles = <String>[];
+  final entries = <DictionaryEntry>[];
   ArticleHeadingInfo? prev;
+  List<FormattedText>? previousDefinitions;
   for (int i = 0; i < headings.length; i++) {
     final h = headings[i];
     if (i < headings.length - 1) {
@@ -768,7 +783,17 @@ String _lsdDecodeInIsolate(Uint8List data) {
 
     if (prev != null && prev.reference == h.reference) {
       prev.words.addAll(h.words);
-      articles.add('');
+      if (previousDefinitions != null) {
+        for (final word in h.words) {
+          entries.add(DictionaryEntry(
+            word: word,
+            definitions: previousDefinitions,
+            dictionaryId: dictionaryId ?? header.entriesCount.toString(),
+            dictionaryName: name,
+            index: entries.length,
+          ));
+        }
+      }
       continue;
     }
 
@@ -781,34 +806,22 @@ String _lsdDecodeInIsolate(Uint8List data) {
       }
       article = decoder.decodeArticle(size);
     }
-    articles.add(article);
-    prev = h;
-  }
 
-  final entries = <DictionaryEntry>[];
-  final articleCache = <int, List<FormattedText>>{};
-  for (int i = 0; i < headings.length; i++) {
-    final heading = headings[i];
-    if (i >= articles.length) break;
-
-    final articleText = articles[i];
-    final definitions = articleCache.putIfAbsent(
-      i,
-      () => parseLingvoFormattedText(articleText),
-    );
-
-    for (final word in heading.words) {
+    final definitions = parseLingvoFormattedText(article);
+    previousDefinitions = definitions;
+    for (final word in h.words) {
       entries.add(DictionaryEntry(
         word: word,
         definitions: definitions,
-        dictionaryId: header.entriesCount.toString(),
+        dictionaryId: dictionaryId ?? header.entriesCount.toString(),
         dictionaryName: name,
         index: entries.length,
       ));
     }
+    prev = h;
   }
 
-  return jsonEncode({'name': name, 'entries': entries.map((e) => e.toJson()).toList()});
+  return LsdDecodeResult(name: name, entries: entries);
 }
 
 Decoder _createDecoderInIsolate(LsdHeader header, BitStream bs, Uint8List data) {
@@ -860,4 +873,18 @@ class LsdDecodeResult {
   final List<DictionaryEntry> entries;
 
   LsdDecodeResult({required this.name, required this.entries});
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'entries': entries.map((entry) => entry.toJson()).toList(),
+      };
+
+  factory LsdDecodeResult.fromJson(Map<String, dynamic> json) {
+    return LsdDecodeResult(
+      name: json['name'] as String,
+      entries: (json['entries'] as List)
+          .map((e) => DictionaryEntry.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
 }

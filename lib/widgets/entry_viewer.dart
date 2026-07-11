@@ -98,6 +98,7 @@ class EntryViewer extends ConsumerWidget {
       ),
       child: RichText(
         text: _buildTextSpan(context, def.segments, tabs),
+        textScaler: MediaQuery.textScalerOf(context),
       ),
     );
   }
