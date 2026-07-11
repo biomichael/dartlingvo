@@ -1,7 +1,13 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:path/path.dart' as p;
 import '../state/app_state.dart';
 import '../core/managers/lookup_tab_manager.dart';
+import '../core/managers/dictionary_manager.dart';
 import '../core/models/formatted_text.dart';
 import '../core/models/dictionary_entry.dart';
 
@@ -11,6 +17,7 @@ class EntryViewer extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final entry = ref.watch(currentEntryProvider);
+    final manager = ref.watch(dictionaryManagerProvider);
     final tabs = ref.read(lookupTabManagerProvider);
     final availableEntries = ref.watch(currentAvailableEntriesProvider);
 
@@ -76,7 +83,9 @@ class EntryViewer extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: 20),
-            ...entry.definitions.map((def) => _buildDefinition(context, def, tabs)),
+            ...entry.definitions.map(
+              (def) => _buildDefinition(context, def, tabs, entry, manager),
+            ),
           ],
         ),
       ),
@@ -84,7 +93,11 @@ class EntryViewer extends ConsumerWidget {
   }
 
   Widget _buildDefinition(
-      BuildContext context, FormattedText def, LookupTabManager tabs) {
+      BuildContext context,
+      FormattedText def,
+      LookupTabManager tabs,
+      DictionaryEntry entry,
+      DictionaryManager manager) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
@@ -97,14 +110,14 @@ class EntryViewer extends ConsumerWidget {
         ),
       ),
       child: RichText(
-        text: _buildTextSpan(context, def.segments, tabs),
+        text: _buildTextSpan(context, def.segments, tabs, entry, manager),
         textScaler: MediaQuery.textScalerOf(context),
       ),
     );
   }
 
   TextSpan _buildTextSpan(BuildContext context, List<TextSegment> segments,
-        LookupTabManager tabs) {
+      LookupTabManager tabs, DictionaryEntry entry, DictionaryManager manager) {
     final spans = <InlineSpan>[];
 
     for (final seg in segments) {
@@ -140,6 +153,15 @@ class EntryViewer extends ConsumerWidget {
                 fontWeight: FontWeight.w500,
               )),
             ),
+          ),
+        ));
+      } else if (_isMediaReference(seg)) {
+        final media = _resolveMediaReference(manager, entry, seg.text);
+        spans.add(WidgetSpan(
+          alignment: PlaceholderAlignment.middle,
+          child: _DictionaryMediaTile(
+            label: seg.text.trim(),
+            file: media,
           ),
         ));
       } else {
@@ -235,6 +257,194 @@ class EntryViewer extends ConsumerWidget {
     }
 
     return Theme.of(context).colorScheme.onSurface;
+  }
+
+  bool _isMediaReference(TextSegment segment) {
+    if (!segment.strikeThrough) {
+      return false;
+    }
+
+    final text = segment.text.trim();
+    if (text.isEmpty) {
+      return false;
+    }
+
+    final fileName = p.basename(text);
+    return RegExp(
+      r'.+\.(bmp|gif|jpe?g|png|webp|wav|mp3|m4a|aac|ogg|flac|mp4|mov|mkv)$',
+      caseSensitive: false,
+    ).hasMatch(fileName);
+  }
+
+  File? _resolveMediaReference(
+    DictionaryManager manager,
+    DictionaryEntry? entry,
+    String mediaText,
+  ) {
+    final dictionary = entry == null ? null : manager.dictionaryById(entry.dictionaryId);
+    final candidates = <Directory>[];
+
+    if (dictionary != null) {
+      final sourceDir = File(dictionary.sourcePath).parent;
+      candidates.add(sourceDir);
+      if (dictionary.cachedFilePath != null) {
+        candidates.add(File(dictionary.cachedFilePath!).parent);
+      }
+    }
+
+    final relative = mediaText.trim();
+    if (relative.isEmpty) {
+      return null;
+    }
+
+    for (final dir in candidates) {
+      final candidate = File(p.normalize(p.join(dir.path, relative)));
+      if (candidate.existsSync()) {
+        return candidate;
+      }
+
+      final basenameCandidate = File(p.join(dir.path, p.basename(relative)));
+      if (basenameCandidate.existsSync()) {
+        return basenameCandidate;
+      }
+    }
+
+    return null;
+  }
+}
+
+class _DictionaryMediaTile extends StatefulWidget {
+  final String label;
+  final File? file;
+
+  const _DictionaryMediaTile({
+    required this.label,
+    required this.file,
+  });
+
+  @override
+  State<_DictionaryMediaTile> createState() => _DictionaryMediaTileState();
+}
+
+class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
+  AudioPlayer? _player;
+  StreamSubscription<PlayerState>? _playerStateSubscription;
+  bool _isPlaying = false;
+
+  @override
+  void dispose() {
+    _playerStateSubscription?.cancel();
+    _player?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _playAudio() async {
+    if (widget.file == null) return;
+
+    final player = _player ??= AudioPlayer();
+    await player.setFilePath(widget.file!.path);
+    await _playerStateSubscription?.cancel();
+    _playerStateSubscription = player.playerStateStream.listen((state) {
+      if (!mounted) return;
+      final shouldShowPlaying = state.playing && state.processingState == ProcessingState.ready;
+      if (_isPlaying != shouldShowPlaying) {
+        setState(() => _isPlaying = shouldShowPlaying);
+      }
+    });
+    await player.play();
+  }
+
+  void _showImage(BuildContext context) {
+    if (widget.file == null) return;
+    showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        child: InteractiveViewer(
+          child: Image.file(widget.file!, fit: BoxFit.contain),
+        ),
+      ),
+    );
+  }
+
+  bool get _isImage {
+    final file = widget.file;
+    if (file == null) return false;
+    return RegExp(r'.+\.(bmp|gif|jpe?g|png|webp)$', caseSensitive: false)
+        .hasMatch(file.path);
+  }
+
+  bool get _isAudio {
+    final file = widget.file;
+    if (file == null) return false;
+    return RegExp(r'.+\.(wav|mp3|m4a|aac|ogg|flac)$', caseSensitive: false)
+        .hasMatch(file.path);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    if (widget.file == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.insert_drive_file_outlined,
+                size: 16, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Text(
+              widget.label,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_isImage) {
+      return GestureDetector(
+        onTap: () => _showImage(context),
+        child: Container(
+          constraints: const BoxConstraints(maxWidth: 180, maxHeight: 140),
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Image.file(widget.file!, fit: BoxFit.contain),
+        ),
+      );
+    }
+
+    if (_isAudio) {
+      return IconButton(
+        tooltip: widget.label,
+        icon: Icon(_isPlaying ? Icons.pause_circle : Icons.play_circle),
+        onPressed: _playAudio,
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        widget.label,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: theme.colorScheme.onPrimaryContainer,
+        ),
+      ),
+    );
   }
 }
 

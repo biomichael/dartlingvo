@@ -789,6 +789,8 @@ class DictionaryManager extends ChangeNotifier {
     return null;
   }
 
+  Dictionary? dictionaryById(String id) => _dictionaryById(id);
+
   String _indexCachePathFor(String snapshotPath) {
     if (snapshotPath.toLowerCase().endsWith('.json')) {
       return '${snapshotPath.substring(0, snapshotPath.length - 5)}.index.json';
