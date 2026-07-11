@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:path/path.dart' as p;
 import '../managers/dictionary_manager.dart';
 
 class DictionaryService {
@@ -23,17 +24,17 @@ class DictionaryService {
       final filePath = result.files.single.path;
       if (filePath == null) return null;
 
-      final extension = filePath.split('.').last.toLowerCase();
+      final extension = p.extension(filePath).toLowerCase();
 
       switch (extension) {
-        case 'lsd':
+        case '.lsd':
           await _manager.loadLsdFile(filePath);
           break;
-        case 'dsl':
+        case '.dsl':
           await _manager.loadDslFile(filePath);
           break;
         default:
-          throw Exception('Unsupported file format: .$extension');
+          throw Exception('Unsupported file format: $extension');
       }
 
       return filePath;
@@ -52,8 +53,8 @@ class DictionaryService {
 
     await for (final entity in dir.list()) {
       if (entity is File) {
-        final ext = entity.path.split('.').last.toLowerCase();
-        if (ext == 'lsd' || ext == 'dsl') {
+        final ext = p.extension(entity.path).toLowerCase();
+        if (ext == '.lsd' || ext == '.dsl') {
           files.add(entity);
         }
       }
@@ -61,10 +62,10 @@ class DictionaryService {
 
     for (final file in files) {
       try {
-        final ext = file.path.split('.').last.toLowerCase();
-        if (ext == 'lsd') {
+        final ext = p.extension(file.path).toLowerCase();
+        if (ext == '.lsd') {
           await _manager.loadLsdFile(file.path);
-        } else if (ext == 'dsl') {
+        } else if (ext == '.dsl') {
           await _manager.loadDslFile(file.path);
         }
         loaded.add(file.path);

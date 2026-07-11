@@ -57,7 +57,6 @@ String _lsdDecodeInIsolate(Uint8List data) {
     bs.readInt();
   }
 
-  final hi = header['version'] >> 16;
   // hi == 0x13 -> SystemDictionaryDecoder13
   final dec = _SystemDictionaryDecoder13(bs);
   
@@ -105,9 +104,9 @@ String _lsdDecodeInIsolate(Uint8List data) {
     final h = headings[i];
     int nextRef;
     if (i < headings.length - 1) {
-      nextRef = headings[i + 1]['reference'];
+      nextRef = headings[i + 1]['reference'] as int;
     } else {
-      nextRef = header['pagesOffset'] - header['articlesOffset'];
+      nextRef = (header['pagesOffset'] as int) - (header['articlesOffset'] as int);
     }
     
     if (prevRef != null && prevRef == h['reference']) {
@@ -117,7 +116,7 @@ String _lsdDecodeInIsolate(Uint8List data) {
     
     String article = '';
     if (nextRef != 0) {
-      bs.seek(header['articlesOffset'] + h['reference']);
+      bs.seek((header['articlesOffset'] as int) + (h['reference'] as int));
       int size = bs.readBits(16);
       if (size == 0xFFFF) {
         size = bs.readBits(32);
@@ -157,7 +156,7 @@ String _lsdDecodeInIsolate(Uint8List data) {
   return jsonEncode({'name': name, 'entries': entries});
 }
 
-Map _readHeader(BitStream bs) {
+Map _readHeader(decoder.BitStream bs) {
   final rawMagic = bs.readBytes(8);
   final magic = String.fromCharCodes(rawMagic).replaceAll('\x00', '');
   return {
@@ -185,76 +184,6 @@ int _rev16(int v) {
   return (bytes[0] << 8) | bytes[1];
 }
 
-// Minimal copy of needed classes
-class BitStream {
-  final Uint8List data;
-  int bytePos;
-  int bitPos;
-  BitStream(this.data) : bytePos = 0, bitPos = 0;
-  
-  int get length => data.length;
-  
-  bool seek(int pos) { bytePos = pos; bitPos = 0; return bytePos < length; }
-  
-  Uint8List readBytes(int count) {
-    final result = Uint8List(count);
-    result.setRange(0, count, data, bytePos);
-    bytePos += count;
-    return result;
-  }
-  
-  int readByte() { final b = data[bytePos]; bytePos++; bitPos = 0; return b; }
-  
-  int readWord() {
-    final hi = data[bytePos];
-    final lo = data[bytePos + 1];
-    bytePos += 2;
-    bitPos = 0;
-    return (hi << 8) | lo;
-  }
-  
-  int readInt() {
-    final b0 = data[bytePos];
-    final b1 = data[bytePos + 1];
-    final b2 = data[bytePos + 2];
-    final b3 = data[bytePos + 3];
-    bytePos += 4;
-    bitPos = 0;
-    return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
-  }
-  
-  int readBit() {
-    final b = data[bytePos];
-    final bit = (b >> (7 - bitPos)) & 1;
-    if (bitPos == 7) {
-      bytePos++;
-      bitPos = 0;
-    } else {
-      bitPos++;
-    }
-    return bit;
-  }
-  
-  int readBits(int count) {
-    if (count > 32) throw Exception('Too many bits: $count');
-    int result = 0;
-    for (int i = 0; i < count; i++) {
-      result = (result << 1) | readBit();
-    }
-    return result;
-  }
-  
-  String readUnicode(int size, [bool bigEndian = true]) {
-    final sb = StringBuffer();
-    for (int i = 0; i < size; i++) {
-      int ch = readWord();
-      if (!bigEndian) ch = _rev16(ch);
-      sb.writeCharCode(ch);
-    }
-    return sb.toString();
-  }
-}
-
 int bitLength(int num) {
   int res = 1;
   num >>= 1;
@@ -270,7 +199,7 @@ class _CachePage {
   final int headingsCount;
   _CachePage(this.isLeaf, this.headingsCount);
   
-  static _CachePage read(BitStream bs) {
+  static _CachePage read(decoder.BitStream bs) {
     final isLeaf = bs.readBit() == 1;
     bs.readBits(16); bs.readBits(16); bs.readBits(16); bs.readBits(16);
     final headingsCount = bs.readBits(16);
@@ -279,17 +208,8 @@ class _CachePage {
   }
 }
 
-extension on BitStream {
-  void toNearestByte() {
-    if (bitPos != 0) {
-      bitPos = 0;
-      bytePos++;
-    }
-  }
-}
-
 class _LenTable {
-  final BitStream _bs;
+  final decoder.BitStream _bs;
   int count = 0;
   int bitsPerLen = 0;
   int idxBitSize = 0;
@@ -356,18 +276,18 @@ class _LenTable {
     while (true) {
       final bit = _bs.readBit();
       if (bit == 1) {
-        if (nodes[node]['r'] < 0) return -1 - nodes[node]['r'];
-        node = nodes[node]['r'] - 1;
+        if ((nodes[node]['r'] as int) < 0) return -1 - (nodes[node]['r'] as int);
+        node = (nodes[node]['r'] as int) - 1;
       } else {
-        if (nodes[node]['l'] < 0) return -1 - nodes[node]['l'];
-        node = nodes[node]['l'] - 1;
+        if ((nodes[node]['l'] as int) < 0) return -1 - (nodes[node]['l'] as int);
+        node = (nodes[node]['l'] as int) - 1;
       }
     }
   }
 }
 
 class _SystemDictionaryDecoder13 {
-  final BitStream bs;
+  final decoder.BitStream bs;
   String prefix = '';
   List<int> articleSymbols = [];
   List<int> headingSymbols = [];
@@ -437,18 +357,6 @@ class _SystemDictionaryDecoder13 {
       }
     }
     return String.fromCharCodes(codes);
-  }
-}
-
-extension on BitStream {
-  List<int> readSymbols() {
-    final size = readBits(32);
-    final bitsPerSymbol = readBits(8);
-    final symbols = <int>[];
-    for (int i = 0; i < size; i++) {
-      symbols.add(readBits(bitsPerSymbol));
-    }
-    return symbols;
   }
 }
 

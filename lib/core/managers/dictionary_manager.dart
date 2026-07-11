@@ -97,7 +97,9 @@ class DictionaryManager extends ChangeNotifier {
     }
 
     if (_dictionaries.isNotEmpty) {
-      await _writeGlobalTrieCache();
+      if (!Platform.isIOS) {
+        await _writeGlobalTrieCache();
+      }
       notifyListeners();
     }
   }
@@ -108,19 +110,21 @@ class DictionaryManager extends ChangeNotifier {
     bool persist = true,
   }) async {
     try {
-      final originalPath = sourcePath ?? filePath;
+      final originalPath = _canonicalizePath(sourcePath ?? filePath);
       final existing = _dictionaryByFilePath(originalPath);
       if (existing != null) {
         setActiveDictionary(existing.id);
         return existing.wordCount;
       }
 
-      final decoder = LsdDecoderDart(filePath);
+      final id = 'dict_${DateTime.now().millisecondsSinceEpoch}';
+      final decoder = LsdDecoderDart(filePath, dictionaryId: id);
       final result = await decoder.decode();
 
-      final id = 'dict_${DateTime.now().millisecondsSinceEpoch}';
       final dictName = result.name.isNotEmpty ? result.name : 'Dictionary';
       final entries = result.entries;
+      final persistSnapshot = persist && !Platform.isIOS;
+      final persistCaches = persist;
 
       final cachedFilePath = persist ? await _cachePathFor(filePath, id) : null;
       final cachedIndexFilePath = persist && cachedFilePath != null
@@ -138,11 +142,14 @@ class DictionaryManager extends ChangeNotifier {
 
       final normalized = _addDictionary(dictionary, entries, persistManifest: persist);
 
-      if (persist && cachedFilePath != null) {
+      if (persistSnapshot && cachedFilePath != null) {
         await _writeDictionarySnapshot(
           File(cachedFilePath),
           DictionaryCacheSnapshot(dictionary: dictionary, entries: normalized),
         );
+      }
+
+      if (persistCaches && cachedFilePath != null) {
         await writeDlcCache(
           File(_dlcCachePathFor(cachedFilePath)),
           dictionary,
@@ -151,13 +158,17 @@ class DictionaryManager extends ChangeNotifier {
         if (cachedIndexFilePath != null) {
           await _writeDictionaryIndexSnapshot(
             File(cachedIndexFilePath),
-            _buildDictionaryIndexSnapshot(dictionary, normalized),
+            dictionary,
+            normalized,
           );
         }
       }
 
-      if (persist) {
+      if (persist && !Platform.isIOS) {
         await _writeGlobalTrieCache();
+      }
+
+      if (persist) {
         await _writePersistedDictionaries();
       }
 
@@ -173,7 +184,7 @@ class DictionaryManager extends ChangeNotifier {
     bool persist = true,
   }) async {
     try {
-      final originalPath = sourcePath ?? filePath;
+      final originalPath = _canonicalizePath(sourcePath ?? filePath);
       final existing = _dictionaryByFilePath(originalPath);
       if (existing != null) {
         setActiveDictionary(existing.id);
@@ -187,6 +198,8 @@ class DictionaryManager extends ChangeNotifier {
       final entries = await reader.readAll(filePath);
 
       final dictNameResolved = dictName.isNotEmpty ? dictName : 'Dictionary';
+      final persistSnapshot = persist && !Platform.isIOS;
+      final persistCaches = persist;
       final cachedFilePath = persist ? await _cachePathFor(filePath, id) : null;
       final cachedIndexFilePath = persist && cachedFilePath != null
           ? _indexCachePathFor(cachedFilePath)
@@ -203,11 +216,14 @@ class DictionaryManager extends ChangeNotifier {
 
       final normalized = _addDictionary(dictionary, entries, persistManifest: persist);
 
-      if (persist && cachedFilePath != null) {
+      if (persistSnapshot && cachedFilePath != null) {
         await _writeDictionarySnapshot(
           File(cachedFilePath),
           DictionaryCacheSnapshot(dictionary: dictionary, entries: normalized),
         );
+      }
+
+      if (persistCaches && cachedFilePath != null) {
         await writeDlcCache(
           File(_dlcCachePathFor(cachedFilePath)),
           dictionary,
@@ -216,13 +232,17 @@ class DictionaryManager extends ChangeNotifier {
         if (cachedIndexFilePath != null) {
           await _writeDictionaryIndexSnapshot(
             File(cachedIndexFilePath),
-            _buildDictionaryIndexSnapshot(dictionary, normalized),
+            dictionary,
+            normalized,
           );
         }
       }
 
-      if (persist) {
+      if (persist && !Platform.isIOS) {
         await _writeGlobalTrieCache();
+      }
+
+      if (persist) {
         await _writePersistedDictionaries();
       }
 
@@ -464,6 +484,14 @@ class DictionaryManager extends ChangeNotifier {
     return null;
   }
 
+  String _canonicalizePath(String path) {
+    try {
+      return File(path).resolveSymbolicLinksSync();
+    } catch (_) {
+      return File(path).absolute.path;
+    }
+  }
+
   Future<String> _cachePathFor(String filePath, String id) async {
     final storageDir = await _storageDirectory();
     final fileName = File(filePath).uri.pathSegments.last;
@@ -511,17 +539,19 @@ class DictionaryManager extends ChangeNotifier {
     List<DictionaryEntry> entries, {
     bool persistManifest = true,
   }) {
-    final normalizedEntries = entries
-        .map(
-          (entry) => DictionaryEntry(
-            word: entry.word,
-            definitions: entry.definitions,
-            dictionaryId: dictionary.id,
-            dictionaryName: dictionary.name,
-            index: entry.index,
-          ),
-        )
-        .toList(growable: false);
+    final normalizedEntries = _entriesMatchDictionary(entries, dictionary)
+        ? entries
+        : entries
+            .map(
+              (entry) => DictionaryEntry(
+                word: entry.word,
+                definitions: entry.definitions,
+                dictionaryId: dictionary.id,
+                dictionaryName: dictionary.name,
+                index: entry.index,
+              ),
+            )
+            .toList(growable: false);
 
     _dictionaries.add(dictionary);
     _entriesCache[dictionary.id] = normalizedEntries;
@@ -542,6 +572,19 @@ class DictionaryManager extends ChangeNotifier {
     }
 
     return normalizedEntries;
+  }
+
+  bool _entriesMatchDictionary(
+    List<DictionaryEntry> entries,
+    Dictionary dictionary,
+  ) {
+    for (final entry in entries) {
+      if (entry.dictionaryId != dictionary.id ||
+          entry.dictionaryName != dictionary.name) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<void> _writeDictionarySnapshot(
@@ -593,30 +636,29 @@ class DictionaryManager extends ChangeNotifier {
 
   Future<void> _writeDictionaryIndexSnapshot(
     File file,
-    DictionaryIndexSnapshot snapshot,
-  ) async {
-    await file.writeAsString(jsonEncode(snapshot.toJson()));
-  }
-
-  DictionaryIndexSnapshot _buildDictionaryIndexSnapshot(
     Dictionary dictionary,
     List<DictionaryEntry> entries,
-  ) {
-    final indexEntries = entries
-        .map(
-          (entry) => WordIndexEntry(
-            word: entry.word,
-            dictionaryId: dictionary.id,
-            dictionaryName: dictionary.name,
-            entryIndex: entry.index,
-          ),
-        )
-        .toList(growable: false);
-
-    return DictionaryIndexSnapshot(
-      dictionary: dictionary,
-      indexEntries: indexEntries,
-    );
+  ) async {
+    final sink = file.openWrite();
+    try {
+      sink.write('{"dictionary":');
+      sink.write(jsonEncode(dictionary.toJson()));
+      sink.write(',"indexEntries":[');
+      for (var i = 0; i < entries.length; i++) {
+        if (i > 0) sink.write(',');
+        final entry = entries[i];
+        sink.write(jsonEncode({
+          'word': entry.word,
+          'dictionaryId': dictionary.id,
+          'dictionaryName': dictionary.name,
+          'entryIndex': entry.index,
+        }));
+      }
+      sink.write(']}');
+    } finally {
+      await sink.flush();
+      await sink.close();
+    }
   }
 
   Future<DictionaryCacheSnapshot?> _readDictionaryCacheSnapshot(
@@ -781,42 +823,44 @@ class DictionaryManager extends ChangeNotifier {
     List<DictionaryEntry> entries,
   ) async {
     final metaBytes = utf8.encode(jsonEncode(dictionary.toJson()));
-    final entryJsons = entries.map((e) => utf8.encode(jsonEncode(e.toJson()))).toList();
+    final entryLengths = List<int>.filled(entries.length, 0);
 
     final headerSize = 16;
     final metaSectionLen = metaBytes.length;
     final offsetArraySize = entries.length * 8;
 
-    int dataOffset = headerSize + metaSectionLen + offsetArraySize;
-    final offsets = entryJsons.map((json) {
-      final off = dataOffset;
-      dataOffset += 4 + json.length;
-      return off;
-    }).toList();
-
-    final data = Uint8List(dataOffset);
-    final view = ByteData.view(data.buffer);
-
-    var pos = 0;
-    void writeU32(int v) { view.setUint32(pos, v, Endian.little); pos += 4; }
-    void writeU64(int v) { view.setUint64(pos, v, Endian.little); pos += 8; }
-
-    writeU32(_dlcMagic);
-    writeU32(1);
-    writeU32(entryJsons.length);
-    writeU32(metaBytes.length);
-    data.setRange(pos, pos + metaBytes.length, metaBytes);
-    pos += metaBytes.length;
-
-    for (final off in offsets) { writeU64(off); }
-
-    for (final json in entryJsons) {
-      writeU32(json.length);
-      data.setRange(pos, pos + json.length, json);
-      pos += json.length;
+    for (var i = 0; i < entries.length; i++) {
+      final jsonStr = jsonEncode(entries[i].toJson());
+      final jsonBytes = utf8.encode(jsonStr);
+      entryLengths[i] = jsonBytes.length;
     }
 
-    await file.writeAsBytes(data);
+    final raf = file.openSync(mode: FileMode.write);
+    try {
+      final header = ByteData(16);
+      header.setUint32(0, _dlcMagic, Endian.little);
+      header.setUint32(4, 1, Endian.little);
+      header.setUint32(8, entries.length, Endian.little);
+      header.setUint32(12, metaBytes.length, Endian.little);
+      raf.writeFromSync(header.buffer.asUint8List());
+      raf.writeFromSync(metaBytes);
+
+      var entryOffset = headerSize + metaSectionLen + offsetArraySize;
+      for (var i = 0; i < entries.length; i++) {
+        final offsetBytes = ByteData(8)..setUint64(0, entryOffset, Endian.little);
+        raf.writeFromSync(offsetBytes.buffer.asUint8List());
+        entryOffset += 4 + entryLengths[i];
+      }
+
+      for (var i = 0; i < entries.length; i++) {
+        final jsonBytes = utf8.encode(jsonEncode(entries[i].toJson()));
+        final lenBytes = ByteData(4)..setUint32(0, jsonBytes.length, Endian.little);
+        raf.writeFromSync(lenBytes.buffer.asUint8List());
+        raf.writeFromSync(jsonBytes);
+      }
+    } finally {
+      raf.closeSync();
+    }
   }
 
   static DictionaryEntry? _readSingleEntryFromDlcSync(
@@ -894,7 +938,7 @@ class DictionaryManager extends ChangeNotifier {
   }
 
   String _normalizePath(String path) {
-    final absolutePath = File(path).absolute.path;
+    final absolutePath = _canonicalizePath(path);
     return Platform.isWindows ? absolutePath.toLowerCase() : absolutePath;
   }
 }

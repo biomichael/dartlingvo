@@ -15,96 +15,33 @@ class WordList extends ConsumerWidget {
     final isWide = MediaQuery.of(context).size.width > 600;
 
     if (!manager.hasDictionaries) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Icon(Icons.library_books_outlined, size: 48,
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7)),
-            ),
-            const SizedBox(height: 20),
-            Text('No dictionaries loaded',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Text('Tap + to load an .lsd or .dsl file',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ],
-        ),
+      return _EmptyState(
+        icon: Icons.library_books_outlined,
+        iconColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+        iconBackground: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+        title: 'No dictionaries loaded',
+        message: 'Tap + to load an .lsd or .dsl file',
       );
     }
 
     if (query.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Icon(Icons.search, size: 48,
-                  color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7)),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              '${manager.totalWordCount} entries',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 4),
-            Text('across ${manager.dictionaries.length} dictionaries',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(999),
-              ),
-              child: Text('Start typing to search',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant)),
-            ),
-          ],
-        ),
+      return _EmptyState(
+        icon: Icons.search,
+        iconColor: Theme.of(context).colorScheme.primary.withValues(alpha: 0.7),
+        iconBackground: Theme.of(context).colorScheme.primaryContainer.withValues(alpha: 0.3),
+        title: '${manager.totalWordCount} entries',
+        message: 'across ${manager.dictionaries.length} dictionaries',
+        pillText: 'Start typing to search',
       );
     }
 
     if (searchResults.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Icon(Icons.search_off, size: 48,
-                  color: Theme.of(context).colorScheme.error.withValues(alpha: 0.7)),
-            ),
-            const SizedBox(height: 20),
-            Text('No results found',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            Text('Try a different search term',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant)),
-          ],
-        ),
+      return _EmptyState(
+        icon: Icons.search_off,
+        iconColor: Theme.of(context).colorScheme.error.withValues(alpha: 0.7),
+        iconBackground: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
+        title: 'No results found',
+        message: 'Try a different search term',
       );
     }
 
@@ -133,6 +70,7 @@ class WordList extends ConsumerWidget {
             child: InkWell(
               borderRadius: BorderRadius.circular(12),
               onTap: () {
+                FocusManager.instance.primaryFocus?.unfocus();
                 ref.read(lookupTabManagerProvider).navigateTo(
                   result.word,
                   firstMatch.dictionaryId,
@@ -204,6 +142,88 @@ class WordList extends ConsumerWidget {
                       ),
                   ],
                 ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final Color iconBackground;
+  final String title;
+  final String message;
+  final String? pillText;
+
+  const _EmptyState({
+    required this.icon,
+    required this.iconColor,
+    required this.iconBackground,
+    required this.title,
+    required this.message,
+    this.pillText,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: constraints.maxHeight),
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: iconBackground,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Icon(icon, size: 48, color: iconColor),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    title,
+                    style: textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    message,
+                    style: textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  if (pillText != null) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        pillText!,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ),
