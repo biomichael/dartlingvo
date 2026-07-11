@@ -57,20 +57,13 @@ class _DictionarySearchBarState extends ConsumerState<DictionarySearchBar> {
                   hintText: manager.hasDictionaries
                       ? 'Search words...'
                       : 'Load a dictionary first',
-                  prefixIcon: Padding(
-                    padding: const EdgeInsets.only(left: 12, right: 8),
-                    child: Icon(Icons.search, size: isCompact ? 18 : 20,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                  suffixIcon: IconButton(
+                    icon: Icon(Icons.close, size: isCompact ? 16 : 18),
+                    onPressed: () {
+                      _controller.clear();
+                      ref.read(lookupTabManagerProvider).setQuery('');
+                    },
                   ),
-                  suffixIcon: _controller.text.isNotEmpty
-                      ? IconButton(
-                          icon: Icon(Icons.clear, size: isCompact ? 16 : 18),
-                          onPressed: () {
-                            _controller.clear();
-                            ref.read(lookupTabManagerProvider).setQuery('');
-                          },
-                        )
-                      : null,
                 ),
                 textInputAction: TextInputAction.search,
                 onChanged: (value) => ref.read(lookupTabManagerProvider).setQuery(value),
