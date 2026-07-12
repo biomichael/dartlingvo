@@ -14,8 +14,8 @@ class DictionaryService {
   Future<String?> pickAndLoadDictionary() async {
     try {
       final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['lsd', 'dsl'],
+        type: _pickerType(),
+        allowedExtensions: _pickerType() == FileType.custom ? ['lsd', 'dsl'] : null,
         allowMultiple: false,
       );
 
@@ -42,6 +42,13 @@ class DictionaryService {
       debugPrint('Failed to load dictionary: $e');
       rethrow;
     }
+  }
+
+  FileType _pickerType() {
+    if (Platform.isAndroid || Platform.isIOS) {
+      return FileType.any;
+    }
+    return FileType.custom;
   }
 
   Future<List<String>> loadDictionariesFromDirectory(String directoryPath) async {
