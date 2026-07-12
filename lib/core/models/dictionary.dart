@@ -6,6 +6,7 @@ class Dictionary {
   final String filePath;
   final String sourcePath;
   final String? cachedFilePath;
+  final String? mediaDirectoryPath;
   final int wordCount;
   final DateTime loadedAt;
   final int displayOrder;
@@ -16,6 +17,7 @@ class Dictionary {
     required this.filePath,
     String? sourcePath,
     this.cachedFilePath,
+    this.mediaDirectoryPath,
     this.wordCount = 0,
     DateTime? loadedAt,
     this.displayOrder = 0,
@@ -30,6 +32,7 @@ class Dictionary {
         'filePath': filePath,
         'sourcePath': sourcePath,
         'cachedFilePath': cachedFilePath,
+        'mediaDirectoryPath': mediaDirectoryPath,
         'wordCount': wordCount,
         'loadedAt': loadedAt.toIso8601String(),
         'displayOrder': displayOrder,
@@ -41,6 +44,7 @@ class Dictionary {
         filePath: json['filePath'] as String,
         sourcePath: json['sourcePath'] as String? ?? json['filePath'] as String,
         cachedFilePath: json['cachedFilePath'] as String?,
+        mediaDirectoryPath: json['mediaDirectoryPath'] as String?,
         wordCount: json['wordCount'] as int,
         loadedAt: DateTime.parse(json['loadedAt'] as String),
         displayOrder: json['displayOrder'] as int? ?? 0,
@@ -52,6 +56,7 @@ class Dictionary {
     String? filePath,
     String? sourcePath,
     String? cachedFilePath,
+    String? mediaDirectoryPath,
     int? wordCount,
     DateTime? loadedAt,
     int? displayOrder,
@@ -62,6 +67,7 @@ class Dictionary {
         filePath: filePath ?? this.filePath,
         sourcePath: sourcePath ?? this.sourcePath,
         cachedFilePath: cachedFilePath ?? this.cachedFilePath,
+        mediaDirectoryPath: mediaDirectoryPath ?? this.mediaDirectoryPath,
         wordCount: wordCount ?? this.wordCount,
         loadedAt: loadedAt ?? this.loadedAt,
         displayOrder: displayOrder ?? this.displayOrder,

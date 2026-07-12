@@ -1,15 +1,17 @@
 import 'dart:async';
-import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:just_audio/just_audio.dart';
+import 'package:flutter/services.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:path/path.dart' as p;
 import '../state/app_state.dart';
 import '../core/managers/lookup_tab_manager.dart';
 import '../core/managers/dictionary_manager.dart';
 import '../core/models/formatted_text.dart';
 import '../core/models/dictionary_entry.dart';
+import '../core/models/resolved_media.dart';
 
 class EntryViewer extends ConsumerWidget {
   const EntryViewer({super.key});
@@ -156,12 +158,12 @@ class EntryViewer extends ConsumerWidget {
           ),
         ));
       } else if (_isMediaReference(seg)) {
-        final media = _resolveMediaReference(manager, entry, seg.text);
         spans.add(WidgetSpan(
           alignment: PlaceholderAlignment.middle,
           child: _DictionaryMediaTile(
             label: seg.text.trim(),
-            file: media,
+            entry: entry,
+            manager: manager,
           ),
         ));
       } else {
@@ -276,50 +278,17 @@ class EntryViewer extends ConsumerWidget {
     ).hasMatch(fileName);
   }
 
-  File? _resolveMediaReference(
-    DictionaryManager manager,
-    DictionaryEntry? entry,
-    String mediaText,
-  ) {
-    final dictionary = entry == null ? null : manager.dictionaryById(entry.dictionaryId);
-    final candidates = <Directory>[];
-
-    if (dictionary != null) {
-      final sourceDir = File(dictionary.sourcePath).parent;
-      candidates.add(sourceDir);
-      if (dictionary.cachedFilePath != null) {
-        candidates.add(File(dictionary.cachedFilePath!).parent);
-      }
-    }
-
-    final relative = mediaText.trim();
-    if (relative.isEmpty) {
-      return null;
-    }
-
-    for (final dir in candidates) {
-      final candidate = File(p.normalize(p.join(dir.path, relative)));
-      if (candidate.existsSync()) {
-        return candidate;
-      }
-
-      final basenameCandidate = File(p.join(dir.path, p.basename(relative)));
-      if (basenameCandidate.existsSync()) {
-        return basenameCandidate;
-      }
-    }
-
-    return null;
-  }
 }
 
 class _DictionaryMediaTile extends StatefulWidget {
   final String label;
-  final File? file;
+  final DictionaryEntry entry;
+  final DictionaryManager manager;
 
   const _DictionaryMediaTile({
     required this.label,
-    required this.file,
+    required this.entry,
+    required this.manager,
   });
 
   @override
@@ -329,121 +298,298 @@ class _DictionaryMediaTile extends StatefulWidget {
 class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
   AudioPlayer? _player;
   StreamSubscription<PlayerState>? _playerStateSubscription;
+  StreamSubscription<void>? _playerCompleteSubscription;
+  Timer? _resetTimer;
   bool _isPlaying = false;
+  ResolvedMedia? _media;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_resolveMedia());
+    });
+  }
+
+  Future<void> _resolveMedia() async {
+    try {
+      unawaited(widget.manager.preloadEmbeddedMediaIndex(widget.entry.dictionaryId));
+      final media = widget.manager.resolveMediaReference(widget.entry, widget.label);
+      if (!mounted) return;
+      setState(() {
+        _media = media;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _media = null;
+        _loading = false;
+      });
+    }
+  }
 
   @override
   void dispose() {
+    _resetTimer?.cancel();
     _playerStateSubscription?.cancel();
-    _player?.dispose();
+    _playerCompleteSubscription?.cancel();
+    try {
+      _player?.dispose();
+    } on MissingPluginException {
+      // Desktop plugin registration may be unavailable after hot restart.
+    }
     super.dispose();
   }
 
   Future<void> _playAudio() async {
-    if (widget.file == null) return;
+    final media = _media;
+    if (media == null) return;
 
     final player = _player ??= AudioPlayer();
-    await player.setFilePath(widget.file!.path);
-    await _playerStateSubscription?.cancel();
-    _playerStateSubscription = player.playerStateStream.listen((state) {
+    try {
+      if (_isPlaying) {
+        _resetTimer?.cancel();
+        await player.pause();
+        if (mounted && _isPlaying) {
+          setState(() => _isPlaying = false);
+        }
+        return;
+      }
+
+      await _playerStateSubscription?.cancel();
+      _playerStateSubscription = player.onPlayerStateChanged.listen((state) {
+        if (!mounted) return;
+        final shouldShowPlaying = state == PlayerState.playing;
+        if (_isPlaying != shouldShowPlaying) {
+          setState(() => _isPlaying = shouldShowPlaying);
+        }
+        if (!shouldShowPlaying) {
+          _resetTimer?.cancel();
+        }
+      });
+      await _playerCompleteSubscription?.cancel();
+      _playerCompleteSubscription = player.onPlayerComplete.listen((_) {
+        if (!mounted) return;
+        _resetTimer?.cancel();
+        if (_isPlaying) {
+          setState(() => _isPlaying = false);
+        }
+      });
+      if (defaultTargetPlatform == TargetPlatform.windows) {
+        unawaited(
+          player.setSourceBytes(media.bytes, mimeType: media.mimeType).catchError(
+            (_) {
+              // Windows can miss the prepared event even when the source is ready.
+            },
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        await player.resume();
+      } else {
+        await player.play(BytesSource(media.bytes, mimeType: media.mimeType));
+      }
+      if (mounted && !_isPlaying) {
+        setState(() => _isPlaying = true);
+      }
+      unawaited(_scheduleAutoReset(player));
+    } on MissingPluginException {
+      // Audio plugin is not registered in this runtime.
+    }
+  }
+
+  Future<void> _scheduleAutoReset(AudioPlayer player) async {
+    _resetTimer?.cancel();
+
+    Duration? duration;
+    for (var attempt = 0; attempt < 20; attempt++) {
+      duration = await player.getDuration();
       if (!mounted) return;
-      final shouldShowPlaying = state.playing && state.processingState == ProcessingState.ready;
-      if (_isPlaying != shouldShowPlaying) {
-        setState(() => _isPlaying = shouldShowPlaying);
+      if (duration != null && duration > Duration.zero) {
+        break;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    if (!mounted || duration == null || duration <= Duration.zero) {
+      return;
+    }
+
+    _resetTimer = Timer(duration + const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      if (_isPlaying) {
+        setState(() => _isPlaying = false);
       }
     });
-    await player.play();
   }
 
   void _showImage(BuildContext context) {
-    if (widget.file == null) return;
+    final media = _media;
+    if (media == null) return;
     showDialog<void>(
       context: context,
       builder: (context) => Dialog(
         child: InteractiveViewer(
-          child: Image.file(widget.file!, fit: BoxFit.contain),
+          child: Image.memory(media.bytes, fit: BoxFit.contain),
         ),
       ),
     );
   }
 
   bool get _isImage {
-    final file = widget.file;
-    if (file == null) return false;
-    return RegExp(r'.+\.(bmp|gif|jpe?g|png|webp)$', caseSensitive: false)
-        .hasMatch(file.path);
+    return _media?.isImage ?? false;
   }
 
   bool get _isAudio {
-    final file = widget.file;
-    if (file == null) return false;
-    return RegExp(r'.+\.(wav|mp3|m4a|aac|ogg|flac)$', caseSensitive: false)
-        .hasMatch(file.path);
+    return _media?.isAudio ?? false;
+  }
+
+  bool get _isVideo {
+    return _media?.isVideo ?? false;
+  }
+
+  IconData _iconForLabel(String label) {
+    final normalized = label.toLowerCase();
+    if (RegExp(r'.+\.(bmp|gif|jpe?g|png|webp)$', caseSensitive: false).hasMatch(normalized)) {
+      return Icons.image_outlined;
+    }
+    if (RegExp(r'.+\.(wav|mp3|m4a|aac|ogg|flac)$', caseSensitive: false).hasMatch(normalized)) {
+      return Icons.graphic_eq;
+    }
+    if (RegExp(r'.+\.(mp4|mov|mkv|webm|avi)$', caseSensitive: false).hasMatch(normalized)) {
+      return Icons.movie_outlined;
+    }
+    return Icons.insert_drive_file_outlined;
+  }
+
+  Widget _iconBadge({
+    required BuildContext context,
+    required IconData icon,
+    required String tooltip,
+    required List<Color> colors,
+    required Color foregroundColor,
+    VoidCallback? onTap,
+  }) {
+    final badge = Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: colors,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(11),
+        boxShadow: [
+          BoxShadow(
+            color: colors.last.withValues(alpha: 0.22),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Icon(icon, size: 20, color: foregroundColor),
+    );
+
+    return Tooltip(
+      message: tooltip,
+      child: onTap == null
+          ? badge
+          : InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(8),
+              child: badge,
+            ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final label = widget.label;
 
-    if (widget.file == null) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.insert_drive_file_outlined,
-                size: 16, color: theme.colorScheme.onSurfaceVariant),
-            const SizedBox(width: 6),
-            Text(
-              widget.label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-        ),
+    if (_loading) {
+      return _iconBadge(
+        context: context,
+        icon: _iconForLabel(label),
+        tooltip: label,
+        colors: [
+          theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
+          theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+        ],
+        foregroundColor: theme.colorScheme.onSurfaceVariant,
+      );
+    }
+
+    if (_media == null) {
+      return _iconBadge(
+        context: context,
+        icon: Icons.cloud_off_outlined,
+        tooltip: label,
+        colors: [
+          theme.colorScheme.errorContainer.withValues(alpha: 0.9),
+          theme.colorScheme.errorContainer.withValues(alpha: 0.55),
+        ],
+        foregroundColor: theme.colorScheme.error,
       );
     }
 
     if (_isImage) {
-      return GestureDetector(
-        onTap: () => _showImage(context),
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 180, maxHeight: 140),
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: theme.colorScheme.outlineVariant),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Image.file(widget.file!, fit: BoxFit.contain),
-        ),
+      return _iconBadge(
+        context: context,
+        icon: Icons.photo_outlined,
+        tooltip: label,
+        colors: [
+          const Color(0xFF56CCF2),
+          const Color(0xFF2F80ED),
+        ],
+        foregroundColor: Colors.white,
+        onTap: () {
+          _showImage(context);
+        },
       );
     }
 
     if (_isAudio) {
-      return IconButton(
-        tooltip: widget.label,
-        icon: Icon(_isPlaying ? Icons.pause_circle : Icons.play_circle),
-        onPressed: _playAudio,
+      return _iconBadge(
+        context: context,
+        icon: _isPlaying ? Icons.pause_circle_filled : Icons.graphic_eq_rounded,
+        tooltip: label,
+        colors: [
+          const Color(0xFFFFA726),
+          const Color(0xFFD84315),
+        ],
+        foregroundColor: Colors.white,
+        onTap: () {
+          _playAudio();
+        },
       );
     }
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        widget.label,
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onPrimaryContainer,
-        ),
-      ),
+    if (_isVideo) {
+      return _iconBadge(
+        context: context,
+        icon: Icons.movie_outlined,
+        tooltip: label,
+        colors: [
+          const Color(0xFF8E2DE2),
+          const Color(0xFF4A00E0),
+        ],
+        foregroundColor: Colors.white,
+      );
+    }
+
+    return _iconBadge(
+      context: context,
+      icon: _iconForLabel(label),
+      tooltip: label,
+      colors: [
+        theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.95),
+        theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.7),
+      ],
+      foregroundColor: theme.colorScheme.onSurfaceVariant,
     );
   }
 }
