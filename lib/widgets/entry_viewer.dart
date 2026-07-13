@@ -62,27 +62,47 @@ class EntryViewer extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                Expanded(
-                  child: Text(
-                    entry.word,
-                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: -0.5,
-                        ),
-                  ),
-                ),
-                _DictionaryToggle(
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final isNarrow = constraints.maxWidth < 560;
+                final toggle = _DictionaryToggle(
                   entries: availableEntries.isEmpty ? [entry] : availableEntries,
                   currentDictionaryId:
                       tabs.activeNavigationEntry?.dictionaryId ?? entry.dictionaryId,
                   onSelected: (dictionaryEntry) {
                     tabs.navigateTo(entry.word, dictionaryEntry.dictionaryId);
                   },
-                ),
-              ],
+                );
+                final word = Text(
+                  entry.word,
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: -0.5,
+                      ),
+                );
+
+                if (!isNarrow) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(child: word),
+                      toggle,
+                    ],
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: toggle,
+                    ),
+                    const SizedBox(height: 12),
+                    word,
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 20),
             ...entry.definitions.map(

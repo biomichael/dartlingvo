@@ -34,56 +34,145 @@ int reverse16(int v) {
 }
 
 class BitStream {
-  final Uint8List data;
+  final Uint8List? data;
+  final RandomAccessFile? _raf;
+  final int _fileLength;
+  final int _bufferSize;
   int bytePos;
   int bitPos;
+  Uint8List _buffer;
+  int _bufferStart = 0;
+  int _bufferLength = 0;
+  int _xorRangeStart = -1;
+  int _xorRangeEnd = -1;
+  int _xorKey = 0x7f;
 
-  BitStream(this.data) : bytePos = 0, bitPos = 0;
+  BitStream(this.data)
+      : _raf = null,
+        _fileLength = data!.length,
+        _bufferSize = data!.length,
+        bytePos = 0,
+        bitPos = 0,
+        _buffer = data!;
 
-  int get length => data.length;
+  BitStream.fromFile(this._raf, this._fileLength, {int bufferSize = 1 << 20})
+      : data = null,
+        _bufferSize = bufferSize,
+        bytePos = 0,
+        bitPos = 0,
+        _buffer = Uint8List(0);
+
+  int get length => data?.length ?? _fileLength;
+
+  void enableXorRange(int start, int end) {
+    _xorRangeStart = start;
+    _xorRangeEnd = end;
+    _xorKey = 0x7f;
+  }
 
   bool seek(int pos) {
     bytePos = pos;
     bitPos = 0;
+    _xorKey = 0x7f;
     return bytePos < length;
+  }
+
+  bool get _isFileBacked => _raf != null;
+
+  bool _isXorPosition(int pos) =>
+      _xorRangeStart >= 0 && pos >= _xorRangeStart && pos < _xorRangeEnd;
+
+  void _ensureLoaded(int pos) {
+    if (!_isFileBacked) {
+      return;
+    }
+    if (pos >= _bufferStart && pos < _bufferStart + _bufferLength) {
+      return;
+    }
+
+    final remaining = _fileLength - pos;
+    if (remaining <= 0) {
+      _buffer = Uint8List(0);
+      _bufferStart = pos;
+      _bufferLength = 0;
+      return;
+    }
+
+    final toRead = min(_bufferSize, remaining);
+    final buffer = Uint8List(toRead);
+    _raf!.setPositionSync(pos);
+    var offset = 0;
+    while (offset < toRead) {
+      final read = _raf!.readIntoSync(buffer, offset, toRead);
+      if (read <= 0) {
+        break;
+      }
+      offset += read;
+    }
+    _buffer = offset == toRead ? buffer : buffer.sublist(0, offset);
+    _bufferStart = pos;
+    _bufferLength = _buffer.length;
+  }
+
+  int _rawByteAt(int pos) {
+    if (data != null) {
+      return data![pos];
+    }
+    _ensureLoaded(pos);
+    return _buffer[pos - _bufferStart];
+  }
+
+  int _byteAtCurrentPosition() => _rawByteAt(bytePos);
+
+  int _applyXorIfNeeded(int raw, int pos) {
+    if (!_isXorPosition(pos)) {
+      return raw;
+    }
+    return raw ^ _xorKey;
+  }
+
+  void _advanceXorStateForConsumedByte(int raw, int pos) {
+    if (_isXorPosition(pos)) {
+      _xorKey = xorPad[raw];
+    }
   }
 
   Uint8List readBytes(int count) {
     final result = Uint8List(count);
-    result.setRange(0, count, data, bytePos);
-    bytePos += count;
+    for (int i = 0; i < count; i++) {
+      result[i] = readByte();
+    }
     return result;
   }
 
   int readByte() {
-    final b = data[bytePos];
+    final pos = bytePos;
+    final raw = _byteAtCurrentPosition();
+    final b = _applyXorIfNeeded(raw, pos);
+    _advanceXorStateForConsumedByte(raw, pos);
     bytePos++;
     bitPos = 0;
     return b;
   }
 
   int readWord() {
-    final hi = data[bytePos];
-    final lo = data[bytePos + 1];
-    bytePos += 2;
-    bitPos = 0;
-    return (hi << 8) | lo;
+    return (readByte() << 8) | readByte();
   }
 
   int readInt() {
-    final b0 = data[bytePos];
-    final b1 = data[bytePos + 1];
-    final b2 = data[bytePos + 2];
-    final b3 = data[bytePos + 3];
-    bytePos += 4;
-    bitPos = 0;
-    return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    return (readByte() << 24) |
+        (readByte() << 16) |
+        (readByte() << 8) |
+        readByte();
   }
 
   int readBit() {
-    final b = data[bytePos];
+    final pos = bytePos;
+    final raw = _byteAtCurrentPosition();
+    final b = _applyXorIfNeeded(raw, pos);
     final bit = (b >> (7 - bitPos)) & 1;
     if (bitPos == 7) {
+      _advanceXorStateForConsumedByte(raw, pos);
       bytePos++;
       bitPos = 0;
     } else {
@@ -95,33 +184,9 @@ class BitStream {
   int readBits(int count) {
     if (count > 32) throw Exception('Too many bits: $count');
     if (count == 0) return 0;
-    int result = 0;
-    // Finish current byte
-    if (bitPos > 0) {
-      final bitsHere = 8 - bitPos;
-      if (count <= bitsHere) {
-        final shift = bitsHere - count;
-        result = (data[bytePos] >> shift) & ((1 << count) - 1);
-        bitPos += count;
-        if (bitPos == 8) { bytePos++; bitPos = 0; }
-        return result;
-      }
-      result = data[bytePos] & ((1 << bitsHere) - 1);
-      count -= bitsHere;
-      bytePos++;
-      bitPos = 0;
-    }
-    // Whole bytes
-    while (count >= 8) {
-      result = (result << 8) | data[bytePos];
-      bytePos++;
-      count -= 8;
-    }
-    // Remaining bits
-    if (count > 0) {
-      final shift = 8 - count;
-      result = (result << count) | (data[bytePos] >> shift);
-      bitPos = count;
+    var result = 0;
+    for (int i = 0; i < count; i++) {
+      result = (result << 1) | readBit();
     }
     return result;
   }
@@ -233,16 +298,8 @@ class LenTable {
 
   int decode() {
     int node = nodes.length - 1;
-    final d = _bs.data;
     while (true) {
-      final b = d[_bs.bytePos];
-      final bit = (b >> (7 - _bs.bitPos)) & 1;
-      if (_bs.bitPos == 7) {
-        _bs.bytePos++;
-        _bs.bitPos = 0;
-      } else {
-        _bs.bitPos++;
-      }
+      final bit = _bs.readBit();
       if (bit == 1) {
         if (nodes[node].right < 0) return -1 - nodes[node].right;
         node = nodes[node].right - 1;
@@ -662,15 +719,8 @@ class LsdDecoderDart {
   LsdDecoderDart(this.filePath, {this.dictionaryId});
 
   Future<LsdDecodeResult> decode() async {
-    final file = File(filePath);
-    final data = await file.readAsBytes();
-
-    if (Platform.isIOS) {
-      return _lsdDecodeCore(data, dictionaryId: dictionaryId);
-    }
-
-    final jsonString = await Isolate.run(() => _lsdDecodeInIsolateJson(
-          data,
+    final jsonString = await Isolate.run(() => _lsdDecodeInIsolateJsonFromFile(
+          filePath,
           dictionaryId: dictionaryId,
         ))
         .timeout(const Duration(seconds: 120));
@@ -680,18 +730,25 @@ class LsdDecoderDart {
   }
 }
 
-String _lsdDecodeInIsolateJson(
-  Uint8List data, {
+String _lsdDecodeInIsolateJsonFromFile(
+  String filePath, {
   String? dictionaryId,
 }) {
-  return jsonEncode(_lsdDecodeCore(data, dictionaryId: dictionaryId).toJson());
+  final file = File(filePath);
+  final raf = file.openSync(mode: FileMode.read);
+  try {
+    final length = file.lengthSync();
+    final stream = BitStream.fromFile(raf, length);
+    return jsonEncode(_lsdDecodeCore(stream, dictionaryId: dictionaryId).toJson());
+  } finally {
+    raf.closeSync();
+  }
 }
 
 LsdDecodeResult _lsdDecodeCore(
-  Uint8List data, {
+  BitStream bs, {
   String? dictionaryId,
 }) {
-  final bs = BitStream(data);
   final header = LsdHeader.fromStream(bs);
 
   if (header.magic != 'LingVo') {
@@ -723,14 +780,9 @@ LsdDecodeResult _lsdDecodeCore(
     bs.readInt();
   }
 
-  final decoder = _createDecoderInIsolate(header, bs, data);
+  final decoder = _createDecoderInIsolate(header, bs);
   if (header.version == 0x151005) {
-    int key = 0x7f;
-    for (int i = header.dictionaryEncoderOffset; i < header.articlesOffset; i++) {
-      final byte = data[i];
-      data[i] = byte ^ key;
-      key = xorPad[byte];
-    }
+    bs.enableXorRange(header.dictionaryEncoderOffset, header.articlesOffset);
   }
   bs.seek(header.dictionaryEncoderOffset);
   decoder.read();
@@ -824,7 +876,7 @@ LsdDecodeResult _lsdDecodeCore(
   return LsdDecodeResult(name: name, entries: entries);
 }
 
-Decoder _createDecoderInIsolate(LsdHeader header, BitStream bs, Uint8List data) {
+Decoder _createDecoderInIsolate(LsdHeader header, BitStream bs) {
   final hi = header.hiVersion;
   final version = header.version;
 

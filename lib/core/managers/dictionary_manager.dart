@@ -158,7 +158,7 @@ class DictionaryManager extends ChangeNotifier {
 
       final dictName = result.name.isNotEmpty ? result.name : 'Dictionary';
       final entries = result.entries;
-      final persistSnapshot = persist && !Platform.isIOS;
+      final persistSnapshot = persist && !Platform.isIOS && !Platform.isAndroid && !Platform.isWindows;
       final persistCaches = persist;
 
       final cachedFilePath = persist ? await _cachePathFor(filePath, id) : null;
@@ -180,38 +180,15 @@ class DictionaryManager extends ChangeNotifier {
       final normalized = _addDictionary(dictionary, entries, persistManifest: persist);
       debugPrint('[DictionaryManager] dictionary added id=$id entries=${normalized.length} wordCount=${dictionary.wordCount}');
 
-      if (persistSnapshot && cachedFilePath != null) {
-        debugPrint('[DictionaryManager] writing JSON cache snapshot path=$cachedFilePath');
-        await _writeDictionarySnapshot(
-          File(cachedFilePath),
-          DictionaryCacheSnapshot(dictionary: dictionary, entries: normalized),
-        );
-      }
-
-      if (persistCaches && cachedFilePath != null) {
-        debugPrint('[DictionaryManager] writing DLC and index caches path=$cachedFilePath');
-        await writeDlcCache(
-          File(_dlcCachePathFor(cachedFilePath)),
-          dictionary,
-          normalized,
-        );
-        if (cachedIndexFilePath != null) {
-          await _writeDictionaryIndexSnapshot(
-            File(cachedIndexFilePath),
-            dictionary,
-            normalized,
-          );
-        }
-      }
-
-      if (persist && !Platform.isIOS) {
-        debugPrint('[DictionaryManager] writing global trie cache');
-        await _writeGlobalTrieCache();
-      }
-
       if (persist) {
-        debugPrint('[DictionaryManager] writing persisted dictionary manifest');
-        await _writePersistedDictionaries();
+        await _persistDictionaryArtifacts(
+          dictionary: dictionary,
+          entries: normalized,
+          cachedFilePath: cachedFilePath,
+          cachedIndexFilePath: cachedIndexFilePath,
+          persistSnapshot: persistSnapshot,
+          persistCaches: persistCaches,
+        );
       }
 
       unawaited(preloadEmbeddedMediaIndex(id));
@@ -248,7 +225,7 @@ class DictionaryManager extends ChangeNotifier {
       final entries = await reader.readAll(filePath);
 
       final dictNameResolved = dictName.isNotEmpty ? dictName : 'Dictionary';
-      final persistSnapshot = persist && !Platform.isIOS;
+      final persistSnapshot = persist && !Platform.isIOS && !Platform.isAndroid && !Platform.isWindows;
       final persistCaches = persist;
       final cachedFilePath = persist ? await _cachePathFor(filePath, id) : null;
       final cachedIndexFilePath = persist && cachedFilePath != null
@@ -269,38 +246,15 @@ class DictionaryManager extends ChangeNotifier {
       final normalized = _addDictionary(dictionary, entries, persistManifest: persist);
       debugPrint('[DictionaryManager] dictionary added id=$id entries=${normalized.length} wordCount=${dictionary.wordCount}');
 
-      if (persistSnapshot && cachedFilePath != null) {
-        debugPrint('[DictionaryManager] writing JSON cache snapshot path=$cachedFilePath');
-        await _writeDictionarySnapshot(
-          File(cachedFilePath),
-          DictionaryCacheSnapshot(dictionary: dictionary, entries: normalized),
-        );
-      }
-
-      if (persistCaches && cachedFilePath != null) {
-        debugPrint('[DictionaryManager] writing DLC and index caches path=$cachedFilePath');
-        await writeDlcCache(
-          File(_dlcCachePathFor(cachedFilePath)),
-          dictionary,
-          normalized,
-        );
-        if (cachedIndexFilePath != null) {
-          await _writeDictionaryIndexSnapshot(
-            File(cachedIndexFilePath),
-            dictionary,
-            normalized,
-          );
-        }
-      }
-
-      if (persist && !Platform.isIOS) {
-        debugPrint('[DictionaryManager] writing global trie cache');
-        await _writeGlobalTrieCache();
-      }
-
       if (persist) {
-        debugPrint('[DictionaryManager] writing persisted dictionary manifest');
-        await _writePersistedDictionaries();
+        await _persistDictionaryArtifacts(
+          dictionary: dictionary,
+          entries: normalized,
+          cachedFilePath: cachedFilePath,
+          cachedIndexFilePath: cachedIndexFilePath,
+          persistSnapshot: persistSnapshot,
+          persistCaches: persistCaches,
+        );
       }
 
       unawaited(preloadEmbeddedMediaIndex(id));
@@ -677,6 +631,53 @@ class DictionaryManager extends ChangeNotifier {
     await file.writeAsString(jsonEncode(snapshot.toJson()));
   }
 
+  Future<void> _persistDictionaryArtifacts({
+    required Dictionary dictionary,
+    required List<DictionaryEntry> entries,
+    required String? cachedFilePath,
+    required String? cachedIndexFilePath,
+    required bool persistSnapshot,
+    required bool persistCaches,
+  }) async {
+    try {
+      await Future<void>.delayed(Duration.zero);
+
+      if (persistSnapshot && cachedFilePath != null) {
+        debugPrint('[DictionaryManager] writing JSON cache snapshot path=$cachedFilePath');
+        await _writeDictionarySnapshot(
+          File(cachedFilePath),
+          DictionaryCacheSnapshot(dictionary: dictionary, entries: entries),
+        );
+      }
+
+      if (persistCaches && cachedFilePath != null) {
+        debugPrint('[DictionaryManager] writing DLC and index caches path=$cachedFilePath');
+        await writeDlcCache(
+          File(_dlcCachePathFor(cachedFilePath)),
+          dictionary,
+          entries,
+        );
+        if (cachedIndexFilePath != null) {
+          await _writeDictionaryIndexSnapshot(
+            File(cachedIndexFilePath),
+            dictionary,
+            entries,
+          );
+        }
+      }
+
+      if (!Platform.isIOS) {
+        debugPrint('[DictionaryManager] writing global trie cache');
+        await _writeGlobalTrieCache();
+      }
+
+      debugPrint('[DictionaryManager] writing persisted dictionary manifest');
+      await _writePersistedDictionaries();
+    } catch (e) {
+      debugPrint('[DictionaryManager] background persistence failed: $e');
+    }
+  }
+
   void _addDictionaryRestored(
     Dictionary dictionary,
     List<WordIndexEntry> indexEntries,
@@ -736,6 +737,9 @@ class DictionaryManager extends ChangeNotifier {
           'dictionaryName': dictionary.name,
           'entryIndex': entry.index,
         }));
+        if (i % 1000 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
       sink.write(']}');
     } finally {
@@ -1139,6 +1143,9 @@ class DictionaryManager extends ChangeNotifier {
       final jsonStr = jsonEncode(entries[i].toJson());
       final jsonBytes = utf8.encode(jsonStr);
       entryLengths[i] = jsonBytes.length;
+      if (i % 500 == 0) {
+        await Future<void>.delayed(Duration.zero);
+      }
     }
 
     final raf = file.openSync(mode: FileMode.write);
@@ -1163,6 +1170,9 @@ class DictionaryManager extends ChangeNotifier {
         final lenBytes = ByteData(4)..setUint32(0, jsonBytes.length, Endian.little);
         raf.writeFromSync(lenBytes.buffer.asUint8List());
         raf.writeFromSync(jsonBytes);
+        if (i % 500 == 0) {
+          await Future<void>.delayed(Duration.zero);
+        }
       }
     } finally {
       raf.closeSync();
