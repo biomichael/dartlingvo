@@ -641,6 +641,54 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
     );
   }
 
+  Widget _inlineImagePreview({
+    required BuildContext context,
+    required String tooltip,
+    required VoidCallback onTap,
+  }) {
+    final media = _media;
+    if (media == null) {
+      return const SizedBox.shrink();
+    }
+
+    final theme = Theme.of(context);
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(10),
+          child: Container(
+            constraints: const BoxConstraints(
+              maxWidth: 180,
+              maxHeight: 120,
+              minWidth: 48,
+              minHeight: 48,
+            ),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
+              ),
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Image.memory(
+                media.bytes,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.medium,
+                gaplessPlayback: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -673,15 +721,9 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
     }
 
     if (_isImage) {
-      return _iconBadge(
+      return _inlineImagePreview(
         context: context,
-        icon: Icons.photo_outlined,
         tooltip: label,
-        colors: [
-          const Color(0xFF56CCF2),
-          const Color(0xFF2F80ED),
-        ],
-        foregroundColor: Colors.white,
         onTap: () {
           _showImage(context);
         },
