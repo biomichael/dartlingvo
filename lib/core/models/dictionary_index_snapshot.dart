@@ -37,6 +37,7 @@ class DictionaryIndexSnapshot {
               dictionaryId: data['dictionaryId'] as String,
               dictionaryName: data['dictionaryName'] as String,
               entryIndex: data['index'] as int? ?? data['entryIndex'] as int? ?? 0,
+              articleReference: data['articleReference'] as int?,
             );
           })
           .toList(),

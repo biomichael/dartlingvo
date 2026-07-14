@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -316,6 +317,8 @@ class _DictionaryMediaTile extends StatefulWidget {
 }
 
 class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
+  static final _iosAudioBridge = _IosAudioBridge.instance;
+
   AudioPlayer? _player;
   StreamSubscription<PlayerState>? _playerStateSubscription;
   StreamSubscription<void>? _playerCompleteSubscription;
@@ -323,36 +326,77 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
   bool _isPlaying = false;
   ResolvedMedia? _media;
   bool _loading = true;
+  bool _resolving = false;
+  int _resolveGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    widget.manager.addListener(_onManagerChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_resolveMedia());
     });
   }
 
+  @override
+  void didUpdateWidget(covariant _DictionaryMediaTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.manager != widget.manager) {
+      oldWidget.manager.removeListener(_onManagerChanged);
+      widget.manager.addListener(_onManagerChanged);
+    }
+    if (oldWidget.label != widget.label || oldWidget.entry != widget.entry) {
+      _resolveGeneration++;
+      _media = null;
+      _loading = true;
+      _resolving = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_resolveMedia());
+      });
+    }
+  }
+
+  void _onManagerChanged() {
+    if (!mounted || _resolving || _media != null) {
+      return;
+    }
+    unawaited(_resolveMedia());
+  }
+
   Future<void> _resolveMedia() async {
+    if (_resolving) {
+      return;
+    }
+    _resolving = true;
+    final generation = ++_resolveGeneration;
     try {
       unawaited(widget.manager.preloadEmbeddedMediaIndex(widget.entry.dictionaryId));
       final media = widget.manager.resolveMediaReference(widget.entry, widget.label);
       if (!mounted) return;
+      if (generation != _resolveGeneration) return;
       setState(() {
         _media = media;
         _loading = false;
       });
     } catch (_) {
       if (!mounted) return;
+      if (generation != _resolveGeneration) return;
       setState(() {
         _media = null;
         _loading = false;
       });
+    } finally {
+      if (generation == _resolveGeneration) {
+        _resolving = false;
+      }
     }
   }
 
   @override
   void dispose() {
+    widget.manager.removeListener(_onManagerChanged);
     _resetTimer?.cancel();
     _playerStateSubscription?.cancel();
     _playerCompleteSubscription?.cancel();
@@ -368,37 +412,44 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
     final media = _media;
     if (media == null) return;
 
-    final player = _player ??= AudioPlayer();
     try {
+      AudioPlayer? player;
+      Duration? playbackDuration;
       if (_isPlaying) {
         _resetTimer?.cancel();
-        await player.pause();
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          await _iosAudioBridge.pause();
+        } else {
+          player = _player ??= AudioPlayer();
+          await player.pause();
+        }
         if (mounted && _isPlaying) {
           setState(() => _isPlaying = false);
         }
         return;
       }
 
-      await _playerStateSubscription?.cancel();
-      _playerStateSubscription = player.onPlayerStateChanged.listen((state) {
-        if (!mounted) return;
-        final shouldShowPlaying = state == PlayerState.playing;
-        if (_isPlaying != shouldShowPlaying) {
-          setState(() => _isPlaying = shouldShowPlaying);
-        }
-        if (!shouldShowPlaying) {
-          _resetTimer?.cancel();
-        }
-      });
-      await _playerCompleteSubscription?.cancel();
-      _playerCompleteSubscription = player.onPlayerComplete.listen((_) {
-        if (!mounted) return;
-        _resetTimer?.cancel();
-        if (_isPlaying) {
-          setState(() => _isPlaying = false);
-        }
-      });
       if (defaultTargetPlatform == TargetPlatform.windows) {
+        player = _player ??= AudioPlayer();
+        await _playerStateSubscription?.cancel();
+        _playerStateSubscription = player.onPlayerStateChanged.listen((state) {
+          if (!mounted) return;
+          final shouldShowPlaying = state == PlayerState.playing;
+          if (_isPlaying != shouldShowPlaying) {
+            setState(() => _isPlaying = shouldShowPlaying);
+          }
+          if (!shouldShowPlaying) {
+            _resetTimer?.cancel();
+          }
+        });
+        await _playerCompleteSubscription?.cancel();
+        _playerCompleteSubscription = player.onPlayerComplete.listen((_) {
+          if (!mounted) return;
+          _resetTimer?.cancel();
+          if (_isPlaying) {
+            setState(() => _isPlaying = false);
+          }
+        });
         unawaited(
           player.setSourceBytes(media.bytes, mimeType: media.mimeType).catchError(
             (_) {
@@ -408,16 +459,57 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
         );
         await Future<void>.delayed(const Duration(milliseconds: 100));
         await player.resume();
+      } else if (defaultTargetPlatform == TargetPlatform.iOS && media.isAudio) {
+        final path = await _writeAudioTempFile(media);
+        _logIosAudioDebug(media, path);
+        playbackDuration = await _iosAudioBridge.play(path, mimeType: media.mimeType);
       } else {
+        player = _player ??= AudioPlayer();
+        await _playerStateSubscription?.cancel();
+        _playerStateSubscription = player.onPlayerStateChanged.listen((state) {
+          if (!mounted) return;
+          final shouldShowPlaying = state == PlayerState.playing;
+          if (_isPlaying != shouldShowPlaying) {
+            setState(() => _isPlaying = shouldShowPlaying);
+          }
+          if (!shouldShowPlaying) {
+            _resetTimer?.cancel();
+          }
+        });
+        await _playerCompleteSubscription?.cancel();
+        _playerCompleteSubscription = player.onPlayerComplete.listen((_) {
+          if (!mounted) return;
+          _resetTimer?.cancel();
+          if (_isPlaying) {
+            setState(() => _isPlaying = false);
+          }
+        });
         await player.play(BytesSource(media.bytes, mimeType: media.mimeType));
       }
       if (mounted && !_isPlaying) {
         setState(() => _isPlaying = true);
       }
-      unawaited(_scheduleAutoReset(player));
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        if (playbackDuration != null && playbackDuration > Duration.zero) {
+          unawaited(_scheduleAutoResetForDuration(playbackDuration));
+        }
+      } else {
+        unawaited(_scheduleAutoReset(player!));
+      }
     } on MissingPluginException {
       // Audio plugin is not registered in this runtime.
     }
+  }
+
+  Future<void> _scheduleAutoResetForDuration(Duration duration) async {
+    _resetTimer?.cancel();
+
+    _resetTimer = Timer(duration + const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      if (_isPlaying) {
+        setState(() => _isPlaying = false);
+      }
+    });
   }
 
   Future<void> _scheduleAutoReset(AudioPlayer player) async {
@@ -443,6 +535,30 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
         setState(() => _isPlaying = false);
       }
     });
+  }
+
+  Future<String> _writeAudioTempFile(ResolvedMedia media) async {
+    final ext = media.inferredExtension.isEmpty ? '.wav' : media.inferredExtension;
+    final baseLabel = p.basenameWithoutExtension(widget.label);
+    final safeLabel = baseLabel.replaceAll(RegExp(r'[^a-zA-Z0-9._-]+'), '_');
+    final fileName = 'dartlingvo_${widget.entry.dictionaryId}_$safeLabel$ext';
+    final file = File('${Directory.systemTemp.path}${Platform.pathSeparator}$fileName');
+    await file.writeAsBytes(media.bytes, flush: true);
+    return file.path;
+  }
+
+  void _logIosAudioDebug(ResolvedMedia media, String path) {
+    final bytes = media.bytes;
+    final previewLength = bytes.length < 32 ? bytes.length : 32;
+    final preview = bytes
+        .take(previewLength)
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join(' ');
+    debugPrint(
+      'iOS audio debug: path=$path bytes=${bytes.length} '
+      'mimeType=${media.mimeType ?? "null"} ext=${media.inferredExtension} '
+      'preview=$preview',
+    );
   }
 
   void _showImage(BuildContext context) {
@@ -612,6 +728,25 @@ class _DictionaryMediaTileState extends State<_DictionaryMediaTile> {
       foregroundColor: theme.colorScheme.onSurfaceVariant,
     );
   }
+}
+
+class _IosAudioBridge {
+  _IosAudioBridge._();
+
+  static final _IosAudioBridge instance = _IosAudioBridge._();
+  static const MethodChannel _methodChannel = MethodChannel('dartlingvo/audio');
+
+  Future<Duration?> play(String path, {String? mimeType}) async {
+    final durationMs = await _methodChannel.invokeMethod<int>('play', {
+      'path': path,
+      if (mimeType != null) 'mimeType': mimeType,
+    });
+    return durationMs == null ? null : Duration(milliseconds: durationMs);
+  }
+
+  Future<void> pause() => _methodChannel.invokeMethod<void>('pause');
+
+  Future<void> stop() => _methodChannel.invokeMethod<void>('stop');
 }
 
 class _DictionaryToggle extends StatelessWidget {

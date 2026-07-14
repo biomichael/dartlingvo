@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
@@ -47,13 +46,14 @@ class BitStream {
   int _xorRangeEnd = -1;
   int _xorKey = 0x7f;
 
-  BitStream(this.data)
-      : _raf = null,
-        _fileLength = data!.length,
-        _bufferSize = data!.length,
+  BitStream(Uint8List bytes)
+      : data = bytes,
+        _raf = null,
+        _fileLength = bytes.length,
+        _bufferSize = bytes.length,
         bytePos = 0,
         bitPos = 0,
-        _buffer = data!;
+        _buffer = bytes;
 
   BitStream.fromFile(this._raf, this._fileLength, {int bufferSize = 1 << 20})
       : data = null,
@@ -100,10 +100,14 @@ class BitStream {
 
     final toRead = min(_bufferSize, remaining);
     final buffer = Uint8List(toRead);
-    _raf!.setPositionSync(pos);
+    final raf = _raf;
+    if (raf == null) {
+      return;
+    }
+    raf.setPositionSync(pos);
     var offset = 0;
     while (offset < toRead) {
-      final read = _raf!.readIntoSync(buffer, offset, toRead);
+      final read = raf.readIntoSync(buffer, offset, toRead);
       if (read <= 0) {
         break;
       }
@@ -138,6 +142,13 @@ class BitStream {
   }
 
   Uint8List readBytes(int count) {
+    if (data != null) {
+      final result = Uint8List(count);
+      result.setRange(0, count, data!, bytePos);
+      bytePos += count;
+      return result;
+    }
+
     final result = Uint8List(count);
     for (int i = 0; i < count; i++) {
       result[i] = readByte();
@@ -147,7 +158,7 @@ class BitStream {
 
   int readByte() {
     final pos = bytePos;
-    final raw = _byteAtCurrentPosition();
+    final raw = _rawByteAt(pos);
     final b = _applyXorIfNeeded(raw, pos);
     _advanceXorStateForConsumedByte(raw, pos);
     bytePos++;
@@ -156,10 +167,30 @@ class BitStream {
   }
 
   int readWord() {
-    return (readByte() << 8) | readByte();
+    if (data != null) {
+      final hi = data![bytePos];
+      final lo = data![bytePos + 1];
+      bytePos += 2;
+      bitPos = 0;
+      return (hi << 8) | lo;
+    }
+
+    final hi = readByte();
+    final lo = readByte();
+    return (hi << 8) | lo;
   }
 
   int readInt() {
+    if (data != null) {
+      final b0 = data![bytePos];
+      final b1 = data![bytePos + 1];
+      final b2 = data![bytePos + 2];
+      final b3 = data![bytePos + 3];
+      bytePos += 4;
+      bitPos = 0;
+      return (b0 << 24) | (b1 << 16) | (b2 << 8) | b3;
+    }
+
     return (readByte() << 24) |
         (readByte() << 16) |
         (readByte() << 8) |
@@ -184,6 +215,44 @@ class BitStream {
   int readBits(int count) {
     if (count > 32) throw Exception('Too many bits: $count');
     if (count == 0) return 0;
+
+    if (data != null) {
+      int result = 0;
+      // Finish current byte first.
+      if (bitPos > 0) {
+        final bitsHere = 8 - bitPos;
+        if (count <= bitsHere) {
+          final shift = bitsHere - count;
+          result = (data![bytePos] >> shift) & ((1 << count) - 1);
+          bitPos += count;
+          if (bitPos == 8) {
+            bytePos++;
+            bitPos = 0;
+          }
+          return result;
+        }
+        result = data![bytePos] & ((1 << bitsHere) - 1);
+        count -= bitsHere;
+        bytePos++;
+        bitPos = 0;
+      }
+
+      // Whole bytes.
+      while (count >= 8) {
+        result = (result << 8) | data![bytePos];
+        bytePos++;
+        count -= 8;
+      }
+
+      // Remaining bits.
+      if (count > 0) {
+        final shift = 8 - count;
+        result = (result << count) | (data![bytePos] >> shift);
+        bitPos = count;
+      }
+      return result;
+    }
+
     var result = 0;
     for (int i = 0; i < count; i++) {
       result = (result << 1) | readBit();
@@ -299,7 +368,17 @@ class LenTable {
   int decode() {
     int node = nodes.length - 1;
     while (true) {
-      final bit = _bs.readBit();
+      final pos = _bs.bytePos;
+      final raw = _bs._byteAtCurrentPosition();
+      final b = _bs._applyXorIfNeeded(raw, pos);
+      final bit = (b >> (7 - _bs.bitPos)) & 1;
+      if (_bs.bitPos == 7) {
+        _bs._advanceXorStateForConsumedByte(raw, pos);
+        _bs.bytePos++;
+        _bs.bitPos = 0;
+      } else {
+        _bs.bitPos++;
+      }
       if (bit == 1) {
         if (nodes[node].right < 0) return -1 - nodes[node].right;
         node = nodes[node].right - 1;
@@ -718,36 +797,120 @@ class LsdDecoderDart {
 
   LsdDecoderDart(this.filePath, {this.dictionaryId});
 
-  Future<LsdDecodeResult> decode() async {
-    final jsonString = await Isolate.run(() => _lsdDecodeInIsolateJsonFromFile(
-          filePath,
-          dictionaryId: dictionaryId,
-        ))
+  Future<LsdDecodeResult> decode({bool indexOnly = false}) async {
+    final result = await Isolate.run(
+      () => _lsdDecodeInIsolateResultFromFile(
+        filePath,
+        dictionaryId: dictionaryId,
+        indexOnly: indexOnly,
+      ),
+    )
         .timeout(const Duration(seconds: 120));
 
-    final map = jsonDecode(jsonString) as Map<String, dynamic>;
-    return LsdDecodeResult.fromJson(map);
+    return LsdDecodeResult.fromJson(result);
+  }
+
+  Future<DictionaryEntry?> decodeSingleEntry({
+    required int reference,
+    required String word,
+    required int index,
+  }) async {
+    final result = await Isolate.run(
+      () => _lsdDecodeSingleEntryInIsolateResultFromFile(
+        filePath,
+        dictionaryId: dictionaryId,
+        reference: reference,
+        word: word,
+        index: index,
+      ),
+    ).timeout(const Duration(seconds: 120));
+
+    if (result == null) {
+      return null;
+    }
+    return DictionaryEntry.fromJson(result);
   }
 }
 
-String _lsdDecodeInIsolateJsonFromFile(
+DictionaryEntry? decodeLsdEntrySync(
   String filePath, {
   String? dictionaryId,
+  required int reference,
+  required String word,
+  required int index,
+}) {
+  final file = File(filePath);
+  final raf = file.openSync(mode: FileMode.read);
+  try {
+    final length = file.lengthSync();
+    final bs = BitStream.fromFile(raf, length);
+    final entry = _decodeSingleEntryAtReference(
+      bs,
+      dictionaryId: dictionaryId,
+      reference: reference,
+      word: word,
+      index: index,
+    );
+    if (entry == null) {
+      return null;
+    }
+    return DictionaryEntry.fromJson(entry);
+  } finally {
+    raf.closeSync();
+  }
+}
+
+Map<String, dynamic> _lsdDecodeInIsolateResultFromFile(
+  String filePath, {
+  String? dictionaryId,
+  bool indexOnly = false,
 }) {
   final file = File(filePath);
   final raf = file.openSync(mode: FileMode.read);
   try {
     final length = file.lengthSync();
     final stream = BitStream.fromFile(raf, length);
-    return jsonEncode(_lsdDecodeCore(stream, dictionaryId: dictionaryId).toJson());
+    return _lsdDecodeCore(
+      stream,
+      dictionaryId: dictionaryId,
+      indexOnly: indexOnly,
+    ).toJson();
   } finally {
     raf.closeSync();
   }
 }
 
-LsdDecodeResult _lsdDecodeCore(
+Map<String, dynamic>? _lsdDecodeSingleEntryInIsolateResultFromFile(
+  String filePath, {
+  String? dictionaryId,
+  required int reference,
+  required String word,
+  required int index,
+}) {
+  final file = File(filePath);
+  final raf = file.openSync(mode: FileMode.read);
+  try {
+    final length = file.lengthSync();
+    final bs = BitStream.fromFile(raf, length);
+    final entry = _decodeSingleEntryAtReference(
+      bs,
+      dictionaryId: dictionaryId,
+      reference: reference,
+      word: word,
+      index: index,
+    );
+    return entry;
+  } finally {
+    raf.closeSync();
+  }
+}
+
+Map<String, dynamic>? _decodeSingleEntryAtReference(
   BitStream bs, {
   String? dictionaryId,
+  required int reference,
+  required String word,
+  required int index,
 }) {
   final header = LsdHeader.fromStream(bs);
 
@@ -786,6 +949,122 @@ LsdDecodeResult _lsdDecodeCore(
   }
   bs.seek(header.dictionaryEncoderOffset);
   decoder.read();
+
+  if (reference < 0) {
+    return DictionaryEntry(
+      word: word,
+      definitions: const [],
+      dictionaryId: dictionaryId ?? header.entriesCount.toString(),
+      dictionaryName: name,
+      index: index,
+      articleReference: null,
+    ).toJson();
+  }
+
+  bs.seek(header.articlesOffset + reference);
+  var size = bs.readBits(16);
+  if (size == 0xFFFF) {
+    size = bs.readBits(32);
+  }
+  final article = decoder.decodeArticle(size);
+  final definitions = parseLingvoFormattedText(article);
+
+  return DictionaryEntry(
+    word: word,
+    definitions: definitions,
+    dictionaryId: dictionaryId ?? header.entriesCount.toString(),
+    dictionaryName: name,
+    index: index,
+    articleReference: reference,
+  ).toJson();
+}
+
+LsdDecodeResult _lsdDecodeCore(
+  BitStream bs, {
+  String? dictionaryId,
+  bool indexOnly = false,
+}) {
+  final header = LsdHeader.fromStream(bs);
+
+  if (header.magic != 'LingVo') {
+    throw Exception('Not a valid LSD file: magic "${header.magic}"');
+  }
+
+  final nameLen = bs.readByte();
+  final name = bs.readUnicode(nameLen, false);
+  final firstLen = bs.readByte();
+  bs.readUnicode(firstLen, false);
+  final lastLen = bs.readByte();
+  bs.readUnicode(lastLen, false);
+  final capitalsLen = reverse32(bs.readInt());
+  bs.readUnicode(capitalsLen, false);
+
+  if (header.version > 0x120000) {
+    final iconSize = reverse16(bs.readWord());
+    bs.readBytes(iconSize);
+  }
+  if (header.version > 0x140000) {
+    bs.readInt();
+  }
+  reverse32(bs.readInt());
+  if (header.version > 0x120000) {
+    bs.readInt();
+  }
+  if (header.version > 0x140000) {
+    bs.readInt();
+    bs.readInt();
+  }
+
+  final decoder = _createDecoderInIsolate(header, bs);
+  if (header.version == 0x151005) {
+    bs.enableXorRange(header.dictionaryEncoderOffset, header.articlesOffset);
+  }
+  bs.seek(header.dictionaryEncoderOffset);
+  decoder.read();
+
+  if (indexOnly) {
+    final entries = <DictionaryEntry>[];
+    final pagesCount = header.lastPage + 1;
+    for (int page = 0; page < pagesCount; page++) {
+      bs.seek(header.pagesOffset + 512 * page);
+      final pageObj = CachePage.read(bs);
+      if (!pageObj.isLeaf) continue;
+
+      String prefix = '';
+      for (int idx = 0; idx < pageObj.headingsCount; idx++) {
+        final prefixLen = decoder.decodePrefixLen();
+        final postfixLen = decoder.decodePostfixLen();
+
+        final p = prefixLen > 0 && prefix.length >= prefixLen
+            ? prefix.substring(0, prefixLen)
+            : '';
+        final heading = postfixLen > 0 ? decoder.decodeHeading(postfixLen) : '';
+        final fullWord = p + heading;
+        final reference = decoder.readReference(decoder.huffman2Number);
+
+        if (bs.readBit() != 0) {
+          final pairCount = bs.readBits(8);
+          for (int i = 0; i < pairCount; i++) {
+            bs.readBits(8);
+            bs.readBits(16);
+          }
+        }
+
+        entries.add(DictionaryEntry(
+          word: fullWord,
+          definitions: const [],
+          dictionaryId: dictionaryId ?? header.entriesCount.toString(),
+          dictionaryName: name,
+          index: entries.length,
+          articleReference: reference < 0 ? null : reference,
+        ));
+        if (fullWord.isNotEmpty) {
+          prefix = fullWord;
+        }
+      }
+    }
+    return LsdDecodeResult(name: name, entries: entries);
+  }
 
   final headings = <ArticleHeadingInfo>[];
   final pagesCount = header.lastPage + 1;
@@ -868,6 +1147,7 @@ LsdDecodeResult _lsdDecodeCore(
         dictionaryId: dictionaryId ?? header.entriesCount.toString(),
         dictionaryName: name,
         index: entries.length,
+        articleReference: h.reference <= 0 ? null : h.reference,
       ));
     }
     prev = h;

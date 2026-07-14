@@ -2,7 +2,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
-import 'package:archive/src/zip/zip_file_header.dart';
 import 'package:path/path.dart' as p;
 
 class ZipMediaArchive {
@@ -127,10 +126,7 @@ class ZipMediaArchive {
           return payload;
         case 8:
           try {
-            return const ZLibDecoder().decodeBuffer(
-              InputStream(payload),
-              verify: false,
-            );
+            return Inflate(payload).getBytes();
           } catch (_) {
             return const <int>[];
           }
@@ -190,14 +186,15 @@ class ZipMediaArchive {
     }
 
     raf.setPositionSync(filePosition);
-    raf.readUint32();
-    raf.readUint16();
-    raf.readUint16();
-    final totalCentralDirectoryEntriesOnThisDisk = raf.readUint16();
-    raf.readUint16();
-    final centralDirectorySize = raf.readUint32();
-    final centralDirectoryOffset = raf.readUint32();
-    final commentLength = raf.readUint16();
+    final eocdr = raf.readSync(_eocdrSize);
+    if (eocdr.length < _eocdrSize) {
+      return null;
+    }
+    final eocdrView = ByteData.sublistView(Uint8List.fromList(eocdr));
+    final totalCentralDirectoryEntriesOnThisDisk = eocdrView.getUint16(10, Endian.little);
+    final centralDirectorySize = eocdrView.getUint32(12, Endian.little);
+    final centralDirectoryOffset = eocdrView.getUint32(16, Endian.little);
+    final commentLength = eocdrView.getUint16(20, Endian.little);
     if (commentLength > 0) {
       raf.readSync(commentLength);
     }
@@ -235,30 +232,33 @@ class ZipMediaArchive {
     }
 
     raf.setPositionSync(locPos);
-    final locatorSig = raf.readUint32();
+    final locatorBytes = raf.readSync(_zip64EocdLocatorSize);
+    if (locatorBytes.length < _zip64EocdLocatorSize) {
+      return null;
+    }
+    final locatorView = ByteData.sublistView(Uint8List.fromList(locatorBytes));
+    final locatorSig = locatorView.getUint32(0, Endian.little);
     if (locatorSig != _zip64EocdLocatorSignature) {
       return null;
     }
 
-    raf.readUint32();
-    final zip64DirOffset = raf.readUint64();
-    raf.readUint32();
+    final zip64DirOffset = locatorView.getUint64(8, Endian.little);
 
     raf.setPositionSync(zip64DirOffset);
-    final zip64Sig = raf.readUint32();
+    final zip64Bytes = raf.readSync(_zip64EocdSize);
+    if (zip64Bytes.length < _zip64EocdSize) {
+      return null;
+    }
+    final zip64View = ByteData.sublistView(Uint8List.fromList(zip64Bytes));
+    final zip64Sig = zip64View.getUint32(0, Endian.little);
     if (zip64Sig != _zip64EocdSignature) {
       return null;
     }
 
-    raf.readUint64();
-    raf.readUint16();
-    raf.readUint16();
-    raf.readUint32();
-    raf.readUint32();
-    final totalEntriesOnDisk = raf.readUint64();
-    final totalEntries = raf.readUint64();
-    final dirSize = raf.readUint64();
-    final dirOffset = raf.readUint64();
+    final totalEntriesOnDisk = zip64View.getUint64(24, Endian.little);
+    final totalEntries = zip64View.getUint64(32, Endian.little);
+    final dirSize = zip64View.getUint64(40, Endian.little);
+    final dirOffset = zip64View.getUint64(48, Endian.little);
 
     return _ZipLayout(
       centralDirectoryOffset: dirOffset,
@@ -273,7 +273,11 @@ class ZipMediaArchive {
     final length = raf.lengthSync();
     for (var ip = length - 5; ip >= 0; --ip) {
       raf.setPositionSync(ip);
-      final sig = raf.readUint32();
+      final sigBytes = raf.readSync(4);
+      if (sigBytes.length < 4) {
+        continue;
+      }
+      final sig = ByteData.sublistView(Uint8List.fromList(sigBytes)).getUint32(0, Endian.little);
       if (sig == _eocdLocatorSignature) {
         raf.setPositionSync(pos);
         return ip;
@@ -357,6 +361,13 @@ class ZipMediaArchive {
     }
     return stem;
   }
+
+  static const int _eocdrSize = 22;
+  static const int _zip64EocdLocatorSize = 20;
+  static const int _zip64EocdSize = 56;
+  static const int _eocdLocatorSignature = 0x06054b50;
+  static const int _zip64EocdLocatorSignature = 0x07064b50;
+  static const int _zip64EocdSignature = 0x06064b50;
 }
 
 class _ZipEntryMeta {
@@ -389,9 +400,5 @@ class _ZipLayout {
   });
 }
 
-const _eocdLocatorSignature = 0x06054b50;
-const _zip64EocdLocatorSignature = 0x07064b50;
-const _zip64EocdSignature = 0x06064b50;
-const _zip64EocdLocatorSize = 20;
 const _localHeaderSignature = 0x04034b50;
 const _localHeaderSize = 30;

@@ -6,6 +6,7 @@ class DictionaryEntry {
   final String dictionaryId;
   final String dictionaryName;
   final int index;
+  final int? articleReference;
 
   const DictionaryEntry({
     required this.word,
@@ -13,6 +14,7 @@ class DictionaryEntry {
     required this.dictionaryId,
     required this.dictionaryName,
     this.index = 0,
+    this.articleReference,
   });
 
   bool get isEmpty => word.isEmpty && definitions.isEmpty;
@@ -23,6 +25,7 @@ class DictionaryEntry {
         'dictionaryId': dictionaryId,
         'dictionaryName': dictionaryName,
         'index': index,
+        'articleReference': articleReference,
       };
 
   factory DictionaryEntry.fromJson(Map<String, dynamic> json) =>
@@ -34,6 +37,7 @@ class DictionaryEntry {
         dictionaryId: json['dictionaryId'] as String,
         dictionaryName: json['dictionaryName'] as String,
         index: json['index'] as int? ?? 0,
+        articleReference: json['articleReference'] as int?,
       );
 }
 
@@ -42,12 +46,14 @@ class WordIndexEntry {
   final String dictionaryId;
   final String dictionaryName;
   final int entryIndex;
+  final int? articleReference;
 
   const WordIndexEntry({
     required this.word,
     required this.dictionaryId,
     required this.dictionaryName,
     this.entryIndex = 0,
+    this.articleReference,
   });
 
   String get lookupKey => '$dictionaryId:$word';
@@ -57,6 +63,7 @@ class WordIndexEntry {
         'dictionaryId': dictionaryId,
         'dictionaryName': dictionaryName,
         'entryIndex': entryIndex,
+        'articleReference': articleReference,
       };
 
   factory WordIndexEntry.fromJson(Map<String, dynamic> json) =>
@@ -65,5 +72,6 @@ class WordIndexEntry {
         dictionaryId: json['dictionaryId'] as String,
         dictionaryName: json['dictionaryName'] as String,
         entryIndex: json['entryIndex'] as int? ?? 0,
+        articleReference: json['articleReference'] as int?,
       );
 }

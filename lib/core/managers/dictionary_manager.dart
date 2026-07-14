@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
@@ -11,20 +10,24 @@ import '../models/dictionary_index_snapshot.dart';
 import '../models/dictionary_entry.dart';
 import '../models/resolved_media.dart';
 import '../index/word_index.dart';
+import '../services/dictionary_media_extractor.dart';
 import '../parsing/dsl_stream_reader.dart';
 import '../parsing/lsd_decoder_dart.dart';
 import '../parsing/lsd_overlay_reader.dart';
+import '../services/zip_media_archive.dart';
 
 class DictionaryManager extends ChangeNotifier {
   static const _storageFolderName = 'dartlingvo_dictionaries';
   static const _manifestFileName = 'manifest.json';
   static const _dlcMagic = 0x444C4442;
+  static const _iosIndexOnlyDecodeThresholdBytes = 32 * 1024 * 1024;
 
   final List<Dictionary> _dictionaries = [];
   final WordIndex _wordIndex = WordIndex();
   final Map<String, List<DictionaryEntry>> _entriesCache = {};
   final Set<String> _loadedEntryDictionaryIds = {};
   final Map<String, _EmbeddedMediaIndex> _embeddedMediaIndexCache = {};
+  final Map<String, ZipMediaArchive> _zipMediaArchiveCache = {};
   final Map<String, Map<String, ResolvedMedia>> _resolvedMediaCache = {};
   final Map<String, Future<void>> _embeddedMediaIndexWarmers = {};
   String? _activeDictionaryId;
@@ -78,6 +81,7 @@ class DictionaryManager extends ChangeNotifier {
           cachedFilePath: record.cachedFilePath,
         ),
       );
+      unawaited(_prepareDictionaryMediaAssets(record));
     }
 
     // Fast path: restore entire trie from global cache (single file read, instant)
@@ -153,8 +157,10 @@ class DictionaryManager extends ChangeNotifier {
       }
 
       final id = 'dict_${DateTime.now().millisecondsSinceEpoch}';
-      final decoder = LsdDecoderDart(filePath, dictionaryId: id);
-      final result = await decoder.decode();
+      final sourceLength = await File(originalPath).length();
+      final useIndexOnlyDecode = Platform.isIOS && sourceLength >= _iosIndexOnlyDecodeThresholdBytes;
+      final decoder = LsdDecoderDart(originalPath, dictionaryId: id);
+      final result = await decoder.decode(indexOnly: useIndexOnlyDecode);
 
       final dictName = result.name.isNotEmpty ? result.name : 'Dictionary';
       final entries = result.entries;
@@ -162,6 +168,9 @@ class DictionaryManager extends ChangeNotifier {
       final persistCaches = persist;
 
       final cachedFilePath = persist ? await _cachePathFor(filePath, id) : null;
+      final persistedSourcePath = persist && Platform.isIOS && cachedFilePath != null
+          ? await _persistSourceCopy(originalPath, cachedFilePath)
+          : originalPath;
       final cachedIndexFilePath = persist && cachedFilePath != null
           ? _indexCachePathFor(cachedFilePath)
           : null;
@@ -170,7 +179,7 @@ class DictionaryManager extends ChangeNotifier {
         id: id,
         name: dictName,
         filePath: originalPath,
-        sourcePath: originalPath,
+        sourcePath: persistedSourcePath,
         cachedFilePath: cachedFilePath,
         mediaDirectoryPath: null,
         wordCount: entries.length,
@@ -192,6 +201,7 @@ class DictionaryManager extends ChangeNotifier {
       }
 
       unawaited(preloadEmbeddedMediaIndex(id));
+      unawaited(_prepareDictionaryMediaAssets(dictionary));
       debugPrint('[DictionaryManager] loadLsdFile complete id=$id');
       return normalized.length;
     } catch (e) {
@@ -258,6 +268,7 @@ class DictionaryManager extends ChangeNotifier {
       }
 
       unawaited(preloadEmbeddedMediaIndex(id));
+      unawaited(_prepareDictionaryMediaAssets(dictionary));
       debugPrint('[DictionaryManager] loadDslFile complete id=$id');
       return normalized.length;
     } catch (e) {
@@ -272,11 +283,15 @@ class DictionaryManager extends ChangeNotifier {
       final entries = _entriesCache[dictionaryId];
       if (entries != null) {
         for (final entry in entries) {
-          if (entry.word == word) return entry;
+          if (entry.word == word) {
+            return _resolveEntryIfNeeded(dictionaryId, entry);
+          }
         }
         final lower = word.toLowerCase();
         for (final entry in entries) {
-          if (entry.word.toLowerCase() == lower) return entry;
+          if (entry.word.toLowerCase() == lower) {
+            return _resolveEntryIfNeeded(dictionaryId, entry);
+          }
         }
       }
     }
@@ -287,6 +302,8 @@ class DictionaryManager extends ChangeNotifier {
       final entry = _loadSingleEntryByIndex(
         dictionaryId,
         wordIndexEntry['index'] as int,
+        wordIndexEntry['articleReference'] as int?,
+        wordIndexEntry['word'] as String,
       );
       if (entry != null) {
         _cacheSingleEntry(dictionaryId, entry);
@@ -325,14 +342,20 @@ class DictionaryManager extends ChangeNotifier {
 
     final entries = _entriesCache[dictionaryId];
     if (entries == null || index < 0 || index >= entries.length) return null;
-    return entries[index];
+    return _resolveEntryIfNeeded(dictionaryId, entries[index]);
   }
 
   void _cacheSingleEntry(String dictionaryId, DictionaryEntry entry) {
     final existing = _entriesCache[dictionaryId];
     if (existing == null) {
       _entriesCache[dictionaryId] = [entry];
-    } else if (!existing.any((e) => e.index == entry.index)) {
+      return;
+    }
+
+    final existingIndex = existing.indexWhere((e) => e.index == entry.index);
+    if (existingIndex >= 0) {
+      existing[existingIndex] = entry;
+    } else {
       existing.add(entry);
     }
   }
@@ -397,6 +420,7 @@ class DictionaryManager extends ChangeNotifier {
     _dictionaries.removeWhere((d) => d.id == id);
     _entriesCache.remove(id);
     _embeddedMediaIndexCache.remove(id);
+    _zipMediaArchiveCache.remove(id);
     _resolvedMediaCache.remove(id);
 
     if (_activeDictionaryId == id) {
@@ -466,6 +490,7 @@ class DictionaryManager extends ChangeNotifier {
     _loadedEntryDictionaryIds.clear();
     _wordIndex.clear();
     _embeddedMediaIndexCache.clear();
+    _zipMediaArchiveCache.clear();
     _resolvedMediaCache.clear();
     _activeDictionaryId = null;
 
@@ -530,6 +555,32 @@ class DictionaryManager extends ChangeNotifier {
     return '${storageDir.path}${Platform.pathSeparator}${id}_$fileName';
   }
 
+  Future<String> _persistSourceCopy(
+    String sourcePath,
+    String cachedFilePath,
+  ) async {
+    if (!Platform.isIOS) {
+      return sourcePath;
+    }
+
+    final sourceFile = File(sourcePath);
+    if (!await sourceFile.exists()) {
+      return sourcePath;
+    }
+
+    try {
+      final targetFile = File(cachedFilePath);
+      if (await targetFile.exists()) {
+        await targetFile.delete();
+      }
+      await sourceFile.copy(cachedFilePath);
+      return cachedFilePath;
+    } catch (e) {
+      debugPrint('[DictionaryManager] failed to persist iOS source copy: $e');
+      return sourcePath;
+    }
+  }
+
   Future<void> _refreshDictionaryMediaIfNeeded(Dictionary dictionary) async {
     // Embedded media is resolved directly from the source .lsd on click.
     // Nothing to refresh here.
@@ -586,6 +637,7 @@ class DictionaryManager extends ChangeNotifier {
                 dictionaryId: dictionary.id,
                 dictionaryName: dictionary.name,
                 index: entry.index,
+                articleReference: entry.articleReference,
               ),
             )
             .toList(growable: false);
@@ -599,6 +651,7 @@ class DictionaryManager extends ChangeNotifier {
           dictionaryId: dictionary.id,
           dictionaryName: dictionary.name,
           entryIndex: entry.index,
+          articleReference: entry.articleReference,
         ));
     _wordIndex.addEntries(indexEntries);
 
@@ -736,6 +789,7 @@ class DictionaryManager extends ChangeNotifier {
           'dictionaryId': dictionary.id,
           'dictionaryName': dictionary.name,
           'entryIndex': entry.index,
+          'articleReference': entry.articleReference,
         }));
         if (i % 1000 == 0) {
           await Future<void>.delayed(Duration.zero);
@@ -797,6 +851,7 @@ class DictionaryManager extends ChangeNotifier {
                   dictionaryId: dictionary.id,
                   dictionaryName: dictionary.name,
                   index: e.index,
+                  articleReference: e.articleReference,
                 ))
             .toList(growable: false);
         _entriesCache[dictionary.id] = normalized;
@@ -820,6 +875,7 @@ class DictionaryManager extends ChangeNotifier {
               dictionaryId: dictionary.id,
               dictionaryName: dictionary.name,
               index: entry.index,
+              articleReference: entry.articleReference,
             ),
           )
           .toList(growable: false);
@@ -839,10 +895,46 @@ class DictionaryManager extends ChangeNotifier {
     }
   }
 
-  DictionaryEntry? _loadSingleEntryByIndex(String dictionaryId, int entryIndex) {
+  DictionaryEntry? _loadSingleEntryByIndex(
+    String dictionaryId,
+    int entryIndex, [
+    int? articleReference,
+    String? word,
+  ]) {
     final dictionary = _dictionaryById(dictionaryId);
-    final cachePath = dictionary?.cachedFilePath;
-    if (dictionary == null || cachePath == null) return null;
+    if (dictionary == null) return null;
+
+    final entries = _entriesCache[dictionaryId];
+    if (entries != null) {
+      for (final entry in entries) {
+        if (entry.index == entryIndex) {
+          return _resolveEntryIfNeeded(dictionaryId, entry);
+        }
+      }
+    }
+
+    final indexEntry = _findWordIndexEntryByIndex(dictionaryId, entryIndex);
+    final resolvedWord = word ?? indexEntry?['word'] as String?;
+    final resolvedReference = articleReference ?? indexEntry?['articleReference'] as int?;
+    final sourcePath = _availableDictionarySourcePath(dictionary);
+    if (sourcePath != null &&
+        resolvedWord != null &&
+        resolvedReference != null &&
+        resolvedReference >= 0) {
+      final decoded = decodeLsdEntrySync(
+        sourcePath,
+        dictionaryId: dictionary.id,
+        reference: resolvedReference,
+        word: resolvedWord,
+        index: entryIndex,
+      );
+      if (decoded != null) {
+        return decoded;
+      }
+    }
+
+    final cachePath = dictionary.cachedFilePath;
+    if (cachePath == null) return null;
 
     final dlcPath = _dlcCachePathFor(cachePath);
     if (!File(dlcPath).existsSync()) return null;
@@ -854,17 +946,78 @@ class DictionaryManager extends ChangeNotifier {
     // Case-sensitive exact match first
     for (final entry in _wordIndex.entries) {
       if (entry.dictionaryId == dictionaryId && entry.word == word) {
-        return {'index': entry.entryIndex, 'word': entry.word};
+        return {
+          'index': entry.entryIndex,
+          'word': entry.word,
+          'articleReference': entry.articleReference,
+        };
       }
     }
     // Fallback to case-insensitive
     final lower = word.toLowerCase();
     for (final entry in _wordIndex.entries) {
       if (entry.dictionaryId == dictionaryId && entry.word.toLowerCase() == lower) {
-        return {'index': entry.entryIndex, 'word': entry.word};
+        return {
+          'index': entry.entryIndex,
+          'word': entry.word,
+          'articleReference': entry.articleReference,
+        };
       }
     }
     return {};
+  }
+
+  Map<String, dynamic>? _findWordIndexEntryByIndex(String dictionaryId, int index) {
+    for (final entry in _wordIndex.entries) {
+      if (entry.dictionaryId == dictionaryId && entry.entryIndex == index) {
+        return {
+          'index': entry.entryIndex,
+          'word': entry.word,
+          'articleReference': entry.articleReference,
+        };
+      }
+    }
+    return null;
+  }
+
+  DictionaryEntry? _resolveEntryIfNeeded(String dictionaryId, DictionaryEntry entry) {
+    if (entry.definitions.isNotEmpty || entry.articleReference == null) {
+      return entry;
+    }
+
+    final resolved = _decodeEntryFromSource(
+      dictionaryId,
+      entry.word,
+      entry.index,
+      entry.articleReference!,
+    );
+    if (resolved != null) {
+      _cacheSingleEntry(dictionaryId, resolved);
+      return resolved;
+    }
+
+    return entry;
+  }
+
+  DictionaryEntry? _decodeEntryFromSource(
+    String dictionaryId,
+    String word,
+    int index,
+    int reference,
+  ) {
+    final dictionary = _dictionaryById(dictionaryId);
+    if (dictionary == null) return null;
+
+    final sourcePath = _availableDictionarySourcePath(dictionary);
+    if (sourcePath == null) return null;
+
+    return decodeLsdEntrySync(
+      sourcePath,
+      dictionaryId: dictionary.id,
+      reference: reference,
+      word: word,
+      index: index,
+    );
   }
 
   Dictionary? _dictionaryById(String id) {
@@ -878,11 +1031,42 @@ class DictionaryManager extends ChangeNotifier {
 
   Dictionary? dictionaryById(String id) => _dictionaryById(id);
 
+  String? _availableDictionarySourcePath(Dictionary dictionary) {
+    final candidates = <String>[
+      dictionary.sourcePath,
+      if (dictionary.cachedFilePath != null) dictionary.cachedFilePath!,
+    ];
+    for (final candidate in candidates) {
+      if (File(candidate).existsSync()) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  Future<String?> _resolveAccessibleSourcePath(
+    String sourcePath,
+    String? cachedFilePath,
+  ) async {
+    if (await File(sourcePath).exists()) {
+      return sourcePath;
+    }
+    if (cachedFilePath != null && await File(cachedFilePath).exists()) {
+      return cachedFilePath;
+    }
+    return null;
+  }
+
   ResolvedMedia? resolveMediaReference(DictionaryEntry? entry, String mediaText) {
     if (entry == null) return null;
 
     final dictionary = _dictionaryById(entry.dictionaryId);
     if (dictionary == null) return null;
+
+    final archiveMedia = _resolveArchivedMedia(dictionary, mediaText.trim(), entry.word);
+    if (archiveMedia != null) {
+      return archiveMedia;
+    }
 
     final media = _resolveEmbeddedMedia(dictionary, mediaText.trim(), entry.word);
     if (media != null) {
@@ -929,13 +1113,44 @@ class DictionaryManager extends ChangeNotifier {
     return null;
   }
 
+  ResolvedMedia? _resolveArchivedMedia(
+    Dictionary dictionary,
+    String mediaText,
+    String? entryWord,
+  ) {
+    final archive = _loadMediaArchive(dictionary);
+    if (archive == null) {
+      return null;
+    }
+
+    final file = archive.resolveMediaReference(mediaText, entryWord: entryWord);
+    if (file == null || !file.existsSync()) {
+      return null;
+    }
+
+    try {
+      return ResolvedMedia(
+        name: p.basename(file.path),
+        bytes: file.readAsBytesSync(),
+      );
+    } catch (e) {
+      debugPrint('Failed to read archived media ${file.path} for ${dictionary.name}: $e');
+      return null;
+    }
+  }
+
   _EmbeddedMediaIndex? _loadEmbeddedMediaIndex(Dictionary dictionary) {
     final cached = _embeddedMediaIndexCache[dictionary.id];
     if (cached != null) {
       return cached;
     }
 
-    final reader = LsdOverlayReader.openSync(dictionary.sourcePath);
+    final sourcePath = _availableDictionarySourcePath(dictionary);
+    if (sourcePath == null) {
+      return null;
+    }
+
+    final reader = LsdOverlayReader.openSync(sourcePath);
     if (reader == null) {
       return null;
     }
@@ -952,15 +1167,44 @@ class DictionaryManager extends ChangeNotifier {
     );
   }
 
+  ZipMediaArchive? _loadMediaArchive(Dictionary dictionary) {
+    final cached = _zipMediaArchiveCache[dictionary.id];
+    if (cached != null) {
+      return cached;
+    }
+
+    final mediaDirPath = dictionary.mediaDirectoryPath;
+    if (mediaDirPath == null) {
+      return null;
+    }
+
+    final archivePath = p.join(mediaDirPath, '${dictionary.id}.files.zip');
+    final archive = ZipMediaArchive.open(
+      zipPath: archivePath,
+      cacheDirectoryPath: mediaDirPath,
+    );
+    if (archive == null) {
+      return null;
+    }
+
+    _zipMediaArchiveCache[dictionary.id] = archive;
+    return archive;
+  }
+
   Future<void> preloadEmbeddedMediaIndex(String dictionaryId) async {
     final dictionary = _dictionaryById(dictionaryId);
     if (dictionary == null) {
       return;
     }
 
+    final sourcePath = _availableDictionarySourcePath(dictionary);
+    if (sourcePath == null) {
+      return;
+    }
+
     return preloadEmbeddedMediaIndexForPath(
       dictionaryId: dictionary.id,
-      sourcePath: dictionary.sourcePath,
+      sourcePath: sourcePath,
       cachedFilePath: dictionary.cachedFilePath,
     );
   }
@@ -981,7 +1225,13 @@ class DictionaryManager extends ChangeNotifier {
 
     final future = () async {
       try {
-        final reader = await LsdOverlayReader.open(sourcePath);
+        final resolvedSourcePath = await _resolveAccessibleSourcePath(
+          sourcePath,
+          cachedFilePath,
+        );
+        if (resolvedSourcePath == null) return;
+
+        final reader = await LsdOverlayReader.open(resolvedSourcePath);
         if (reader == null) return;
 
         final headings = await reader.readHeadings();
@@ -1003,6 +1253,45 @@ class DictionaryManager extends ChangeNotifier {
     return future;
   }
 
+  Future<void> _prepareDictionaryMediaAssets(Dictionary dictionary) async {
+    if (!Platform.isIOS) {
+      return;
+    }
+
+    final sourcePath = _availableDictionarySourcePath(dictionary);
+    if (sourcePath == null) {
+      return;
+    }
+
+    try {
+      final extractor = DictionaryMediaExtractor();
+      final mediaDirPath = await extractor.ensureMediaAssets(
+        dictionaryPath: sourcePath,
+        dictionaryId: dictionary.id,
+        cachedFilePath: dictionary.cachedFilePath,
+      );
+      if (mediaDirPath == null) {
+        return;
+      }
+
+      final updatedIndex = _dictionaries.indexWhere((d) => d.id == dictionary.id);
+      if (updatedIndex < 0) {
+        return;
+      }
+
+      final current = _dictionaries[updatedIndex];
+      if (current.mediaDirectoryPath != mediaDirPath) {
+        _dictionaries[updatedIndex] = current.copyWith(mediaDirectoryPath: mediaDirPath);
+        _zipMediaArchiveCache.remove(dictionary.id);
+        notifyListeners();
+      }
+
+      _loadMediaArchive(_dictionaries[updatedIndex]);
+    } catch (e) {
+      debugPrint('[DictionaryManager] prepare media assets failed for ${dictionary.id}: $e');
+    }
+  }
+
   Future<void> preloadEmbeddedMediaIndexes({String? preferredDictionaryId}) async {
     final ordered = <Dictionary>[];
     if (preferredDictionaryId != null) {
@@ -1017,10 +1306,14 @@ class DictionaryManager extends ChangeNotifier {
     }
 
     for (final dictionary in ordered) {
+      final sourcePath = _availableDictionarySourcePath(dictionary);
+      if (sourcePath == null) {
+        continue;
+      }
       unawaited(
         preloadEmbeddedMediaIndexForPath(
           dictionaryId: dictionary.id,
-          sourcePath: dictionary.sourcePath,
+          sourcePath: sourcePath,
           cachedFilePath: dictionary.cachedFilePath,
         ),
       );
@@ -1258,35 +1551,6 @@ class DictionaryManager extends ChangeNotifier {
     return Platform.isWindows ? absolutePath.toLowerCase() : absolutePath;
   }
 
-  List<String> _collectMediaReferenceNames(List<DictionaryEntry> entries) {
-    final refs = <String>{};
-    for (final entry in entries) {
-      for (final def in entry.definitions) {
-        for (final segment in def.segments) {
-          if (!segment.strikeThrough) {
-            continue;
-          }
-          final text = segment.text.trim();
-          if (text.isEmpty) {
-            continue;
-          }
-          if (!_isMediaReferenceText(text)) {
-            continue;
-          }
-          refs.add(text);
-        }
-      }
-    }
-    return refs.toList(growable: false);
-  }
-
-  bool _isMediaReferenceText(String text) {
-    final fileName = p.basename(text);
-    return RegExp(
-      r'.+\.(bmp|gif|jpe?g|png|webp|wav|mp3|m4a|aac|ogg|flac|mp4|mov|mkv|webm|avi)$',
-      caseSensitive: false,
-    ).hasMatch(fileName);
-  }
 }
 
 class _EmbeddedMediaIndex {
