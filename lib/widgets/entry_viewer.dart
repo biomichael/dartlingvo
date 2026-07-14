@@ -14,15 +14,44 @@ import '../core/models/formatted_text.dart';
 import '../core/models/dictionary_entry.dart';
 import '../core/models/resolved_media.dart';
 
-class EntryViewer extends ConsumerWidget {
+class EntryViewer extends ConsumerStatefulWidget {
   const EntryViewer({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<EntryViewer> createState() => _EntryViewerState();
+}
+
+class _EntryViewerState extends ConsumerState<EntryViewer> {
+  final ScrollController _scrollController = ScrollController();
+  String? _lastEntryKey;
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final entry = ref.watch(currentEntryProvider);
     final manager = ref.watch(dictionaryManagerProvider);
     final tabs = ref.read(lookupTabManagerProvider);
     final availableEntries = ref.watch(currentAvailableEntriesProvider);
+    final isDictionaryEnabled = ref.watch(isDictionaryEnabledProvider);
+
+    if (entry != null) {
+      final currentKey = '${entry.dictionaryId}:${entry.word}';
+      if (_lastEntryKey != currentKey) {
+        final shouldScrollToTop = tabs.consumeScrollToTopRequest();
+        _lastEntryKey = currentKey;
+        if (shouldScrollToTop) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || !_scrollController.hasClients) return;
+            _scrollController.jumpTo(0);
+          });
+        }
+      }
+    }
 
     if (entry == null) {
       return Align(
@@ -59,6 +88,7 @@ class EntryViewer extends ConsumerWidget {
     return Align(
       alignment: Alignment.topLeft,
       child: SingleChildScrollView(
+        controller: _scrollController,
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -107,7 +137,14 @@ class EntryViewer extends ConsumerWidget {
             ),
             const SizedBox(height: 20),
             ...entry.definitions.map(
-              (def) => _buildDefinition(context, def, tabs, entry, manager),
+              (def) => _buildDefinition(
+                context,
+                def,
+                tabs,
+                entry,
+                manager,
+                isDictionaryEnabled,
+              ),
             ),
           ],
         ),
@@ -120,7 +157,8 @@ class EntryViewer extends ConsumerWidget {
       FormattedText def,
       LookupTabManager tabs,
       DictionaryEntry entry,
-      DictionaryManager manager) {
+      DictionaryManager manager,
+      bool Function(String) isDictionaryEnabled) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 12),
@@ -132,9 +170,49 @@ class EntryViewer extends ConsumerWidget {
           color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.3),
         ),
       ),
-      child: RichText(
-        text: _buildTextSpan(context, def.segments, tabs, entry, manager),
-        textScaler: MediaQuery.textScalerOf(context),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final textSpan = _buildTextSpan(context, def.segments, tabs, entry, manager);
+          final lookupTextSpan = _buildLookupTextSpan(context, def.segments);
+          final canLookupWithLongPress = switch (defaultTargetPlatform) {
+            TargetPlatform.android || TargetPlatform.iOS || TargetPlatform.fuchsia => true,
+            _ => false,
+          };
+          final canLookupWithDoubleTap = switch (defaultTargetPlatform) {
+            TargetPlatform.macOS || TargetPlatform.windows || TargetPlatform.linux => true,
+            _ => false,
+          };
+
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onLongPressStart: canLookupWithLongPress
+                ? (details) => _lookupWordFromDefinition(
+                      context: context,
+                      localPosition: details.localPosition,
+                      lookupTextSpan: lookupTextSpan,
+                      maxWidth: constraints.maxWidth,
+                      isDictionaryEnabled: isDictionaryEnabled,
+                      tabs: tabs,
+                      manager: manager,
+                    )
+                : null,
+            onDoubleTapDown: canLookupWithDoubleTap
+                ? (details) => _lookupWordFromDefinition(
+                      context: context,
+                      localPosition: details.localPosition,
+                      lookupTextSpan: lookupTextSpan,
+                      maxWidth: constraints.maxWidth,
+                      isDictionaryEnabled: isDictionaryEnabled,
+                      tabs: tabs,
+                      manager: manager,
+                    )
+                : null,
+            child: RichText(
+              text: textSpan,
+              textScaler: MediaQuery.textScalerOf(context),
+            ),
+          );
+        },
       ),
     );
   }
@@ -195,11 +273,129 @@ class EntryViewer extends ConsumerWidget {
     return TextSpan(children: spans);
   }
 
+  TextSpan _buildLookupTextSpan(BuildContext context, List<TextSegment> segments) {
+    final spans = <InlineSpan>[];
+
+    for (final seg in segments) {
+      final baseStyle = TextStyle(
+        color: _segmentColor(context, seg),
+        height: 1.6,
+        fontWeight: seg.type == TextSegmentType.bold ? FontWeight.w600 : FontWeight.normal,
+        fontStyle: seg.type == TextSegmentType.italic || seg.type == TextSegmentType.example
+            ? FontStyle.italic
+            : FontStyle.normal,
+        decoration: seg.underline
+            ? TextDecoration.underline
+            : seg.strikeThrough
+                ? TextDecoration.lineThrough
+                : TextDecoration.none,
+        fontSize: seg.superscript || seg.subscript ? 11 : null,
+      );
+
+      spans.add(TextSpan(text: seg.text, style: baseStyle));
+    }
+
+    return TextSpan(children: spans);
+  }
+
   void _handleRefTap(String word, LookupTabManager tabs) {
     final current = tabs.activeNavigationEntry;
     if (word.isNotEmpty && current != null) {
       tabs.navigateTo(word, current.dictionaryId);
     }
+  }
+
+  void _lookupWordFromDefinition({
+    required BuildContext context,
+    required Offset localPosition,
+    required TextSpan lookupTextSpan,
+    required double maxWidth,
+    required bool Function(String) isDictionaryEnabled,
+    required LookupTabManager tabs,
+    required DictionaryManager manager,
+  }) {
+    final lookupWord = _wordAtPosition(
+      textSpan: lookupTextSpan,
+      localPosition: localPosition,
+      maxWidth: maxWidth,
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+    );
+
+    if (lookupWord == null) {
+      return;
+    }
+
+    final matches = manager
+        .getEntriesForWord(lookupWord)
+        .where((entry) => isDictionaryEnabled(entry.dictionaryId))
+        .toList();
+
+    if (matches.isEmpty) {
+      _showWordNotFound(context, lookupWord);
+      return;
+    }
+
+    final activeDictionaryId = tabs.activeNavigationEntry?.dictionaryId;
+    final chosen = matches.firstWhere(
+      (entry) => entry.dictionaryId == activeDictionaryId,
+      orElse: () => matches.first,
+    );
+
+    tabs.navigateTo(chosen.word, chosen.dictionaryId);
+  }
+
+  String? _wordAtPosition({
+    required TextSpan textSpan,
+    required Offset localPosition,
+    required double maxWidth,
+    required TextDirection textDirection,
+    required TextScaler textScaler,
+  }) {
+    final painter = TextPainter(
+      text: textSpan,
+      textDirection: textDirection,
+      textScaler: textScaler,
+    )..layout(maxWidth: maxWidth);
+
+    final position = painter.getPositionForOffset(localPosition);
+    final boundary = painter.getWordBoundary(position);
+
+    if (boundary.start < 0 || boundary.end <= boundary.start) {
+      return null;
+    }
+
+    final plainText = textSpan.toPlainText(
+      includeSemanticsLabels: false,
+      includePlaceholders: false,
+    );
+    if (boundary.end > plainText.length) {
+      return null;
+    }
+
+    final rawWord = plainText.substring(boundary.start, boundary.end);
+    final normalized = _normalizeLookupWord(rawWord);
+    return normalized.isEmpty ? null : normalized;
+  }
+
+  String _normalizeLookupWord(String value) {
+    final trimmed = value.trim();
+    return trimmed.replaceAll(
+      RegExp(r'^[^A-Za-z0-9]+|[^A-Za-z0-9]+$'),
+      '',
+    );
+  }
+
+  void _showWordNotFound(BuildContext context, String word) {
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('"$word" is not in the installed dictionaries'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 
   Color _segmentColor(BuildContext context, TextSegment segment) {

@@ -364,24 +364,40 @@ class DictionaryManager extends ChangeNotifier {
     final results = <DictionaryEntry>[];
 
     final indexMatches = <WordIndexEntry>[];
-    for (final entry in _wordIndex.entries) {
-      if (dictionaryId != null && entry.dictionaryId != dictionaryId) {
-        continue;
-      }
-      if (entry.word == word) {
-        indexMatches.add(entry);
-      }
-    }
+    final seen = <String>{};
 
-    if (indexMatches.isEmpty) {
-      final lower = word.toLowerCase();
+    for (final candidate in _lookupCandidates(word)) {
+      for (final entry in _wordIndex.entries) {
+        if (dictionaryId != null && entry.dictionaryId != dictionaryId) {
+          continue;
+        }
+        if (entry.word == candidate) {
+          final key = '${entry.dictionaryId}:${entry.entryIndex}';
+          if (seen.add(key)) {
+            indexMatches.add(entry);
+          }
+        }
+      }
+
+      if (indexMatches.isNotEmpty) {
+        break;
+      }
+
+      final lower = candidate.toLowerCase();
       for (final entry in _wordIndex.entries) {
         if (dictionaryId != null && entry.dictionaryId != dictionaryId) {
           continue;
         }
         if (entry.word.toLowerCase() == lower) {
-          indexMatches.add(entry);
+          final key = '${entry.dictionaryId}:${entry.entryIndex}';
+          if (seen.add(key)) {
+            indexMatches.add(entry);
+          }
         }
+      }
+
+      if (indexMatches.isNotEmpty) {
+        break;
       }
     }
 
@@ -407,6 +423,115 @@ class DictionaryManager extends ChangeNotifier {
     });
 
     return results;
+  }
+
+  List<String> _lookupCandidates(String word) {
+    final normalized = _normalizeLookupWord(word);
+    if (normalized.isEmpty) {
+      return const [];
+    }
+
+    final candidates = <String>[];
+    final seen = <String>{};
+
+    void add(String value) {
+      final trimmed = value.trim();
+      if (trimmed.isEmpty) return;
+      if (seen.add(trimmed.toLowerCase())) {
+        candidates.add(trimmed);
+      }
+    }
+
+    add(normalized);
+
+    final lower = normalized.toLowerCase();
+
+    if (lower.endsWith("'s")) {
+      add(normalized.substring(0, normalized.length - 2));
+    }
+    if (lower.endsWith("s'")) {
+      add(normalized.substring(0, normalized.length - 1));
+    }
+
+    const irregulars = <String, String>{
+      'children': 'child',
+      'men': 'man',
+      'women': 'woman',
+      'mice': 'mouse',
+      'geese': 'goose',
+      'teeth': 'tooth',
+      'feet': 'foot',
+      'people': 'person',
+      'oxen': 'ox',
+      'indices': 'index',
+      'matrices': 'matrix',
+      'vertices': 'vertex',
+      'lice': 'louse',
+      'data': 'datum',
+    };
+    final irregular = irregulars[lower];
+    if (irregular != null) {
+      add(irregular);
+    }
+
+    if (lower.endsWith('ies') && lower.length > 3) {
+      add('${normalized.substring(0, normalized.length - 3)}y');
+    }
+
+    if (lower.endsWith('ves') && lower.length > 3) {
+      final stem = normalized.substring(0, normalized.length - 3);
+      add('${stem}f');
+      add('${stem}fe');
+    }
+
+    if (lower.endsWith('ied') && lower.length > 3) {
+      add('${normalized.substring(0, normalized.length - 3)}y');
+    }
+
+    if (lower.endsWith('ing') && lower.length > 4) {
+      final stem = normalized.substring(0, normalized.length - 3);
+      add(stem);
+      add('${stem}e');
+      if (stem.length >= 2 && stem[stem.length - 1] == stem[stem.length - 2]) {
+        add(stem.substring(0, stem.length - 1));
+      }
+    }
+
+    if (lower.endsWith('ed') && lower.length > 3) {
+      final stem = normalized.substring(0, normalized.length - 2);
+      add(stem);
+      add('${stem}e');
+      if (stem.length >= 2 && stem[stem.length - 1] == stem[stem.length - 2]) {
+        add(stem.substring(0, stem.length - 1));
+      }
+    }
+
+    if (lower.endsWith('es') && lower.length > 2) {
+      final stem = normalized.substring(0, normalized.length - 2);
+      add(stem);
+    }
+
+    if (lower.endsWith('s') &&
+        lower.length > 1 &&
+        !lower.endsWith('ss') &&
+        !lower.endsWith('us')) {
+      add(normalized.substring(0, normalized.length - 1));
+    }
+
+    if (lower.endsWith('ly') && lower.length > 3) {
+      add(normalized.substring(0, normalized.length - 2));
+    }
+
+    return candidates;
+  }
+
+  String _normalizeLookupWord(String word) {
+    final trimmed = word.trim();
+    if (trimmed.isEmpty) return '';
+    return trimmed.replaceAll(
+      RegExp(r'^[^A-Za-z0-9]+|[^A-Za-z0-9]+$'),
+      '',
+    );
   }
 
   Future<void> removeDictionary(String id) async {
@@ -943,25 +1068,29 @@ class DictionaryManager extends ChangeNotifier {
   }
 
   Map<String, dynamic> _findWordIndexEntry(String dictionaryId, String word) {
-    // Case-sensitive exact match first
-    for (final entry in _wordIndex.entries) {
-      if (entry.dictionaryId == dictionaryId && entry.word == word) {
-        return {
-          'index': entry.entryIndex,
-          'word': entry.word,
-          'articleReference': entry.articleReference,
-        };
+    for (final candidate in _lookupCandidates(word)) {
+      // Case-sensitive exact match first.
+      for (final entry in _wordIndex.entries) {
+        if (entry.dictionaryId == dictionaryId && entry.word == candidate) {
+          return {
+            'index': entry.entryIndex,
+            'word': entry.word,
+            'articleReference': entry.articleReference,
+          };
+        }
       }
-    }
-    // Fallback to case-insensitive
-    final lower = word.toLowerCase();
-    for (final entry in _wordIndex.entries) {
-      if (entry.dictionaryId == dictionaryId && entry.word.toLowerCase() == lower) {
-        return {
-          'index': entry.entryIndex,
-          'word': entry.word,
-          'articleReference': entry.articleReference,
-        };
+
+      // Fallback to case-insensitive.
+      final lower = candidate.toLowerCase();
+      for (final entry in _wordIndex.entries) {
+        if (entry.dictionaryId == dictionaryId &&
+            entry.word.toLowerCase() == lower) {
+          return {
+            'index': entry.entryIndex,
+            'word': entry.word,
+            'articleReference': entry.articleReference,
+          };
+        }
       }
     }
     return {};

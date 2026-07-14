@@ -6,6 +6,7 @@ class LookupTabManager extends ChangeNotifier {
   final List<LookupTab> _tabs = [];
   int _tabCounter = 0;
   String? _activeTabId;
+  bool _scrollToTopRequested = false;
 
   LookupTabManager() {
     _createInitialTab();
@@ -21,6 +22,7 @@ class LookupTabManager extends ChangeNotifier {
   String get activeQuery => activeTab.searchQuery;
 
   NavigationEntry? get activeNavigationEntry => activeTab.currentEntry;
+  bool get scrollToTopRequested => _scrollToTopRequested;
   bool get canGoBack => activeTab.canGoBack;
   bool get canGoForward => activeTab.canGoForward;
   NavigationEntry? get previousEntry => activeTab.previousEntry;
@@ -77,6 +79,7 @@ class LookupTabManager extends ChangeNotifier {
   void navigateTo(String word, String dictionaryId) {
     activeTab.navigateTo(word, dictionaryId);
     activeTab.setTitleFromSelection(word);
+    _scrollToTopRequested = true;
     notifyListeners();
   }
 
@@ -93,12 +96,20 @@ class LookupTabManager extends ChangeNotifier {
 
   void goBack() {
     activeTab.goBack();
+    _scrollToTopRequested = false;
     notifyListeners();
   }
 
   void goForward() {
     activeTab.goForward();
+    _scrollToTopRequested = false;
     notifyListeners();
+  }
+
+  bool consumeScrollToTopRequest() {
+    final requested = _scrollToTopRequested;
+    _scrollToTopRequested = false;
+    return requested;
   }
 
   LookupTab _createTab({String? title}) {
